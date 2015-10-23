@@ -1,11 +1,12 @@
 import os
 
+import numpy as np
 import scipy.spatial.distance as spd
 from scipy.stats import spearmanr
 import heapq
 
 from nlm.utilities import build_embedding_dictionary
-from monitoring import Extension
+from monitoring import Extension, MonitoredQuantity
 
 
 class MostSimilarWords(Extension):
@@ -26,7 +27,7 @@ class MostSimilarWords(Extension):
         idxs = heapq.nsmallest(self.knn, range(len(distances)), distances.take)
         return [self.inv_vocab[idx] for idx in idxs]
 
-    def apply(self):
+    def execute(self, batch_id):
         npy_emb_matrix = self.embedding_matrix.get_value()
         strs = []
         for word, word_id in zip(self.words, self.word_ids):
@@ -35,9 +36,22 @@ class MostSimilarWords(Extension):
         return strs
 
 
-class Simlex999(Extension):
-    def __init__(self, freq, embedding_matrix, inv_vocab):
-        Extension.__init__(self, 'Simlex999', freq)
+class WordEmbeddingScores(MonitoredQuantity):
+    """
+    Computes the k error rate for a classification model.
+    Parameters
+    ----------
+    idx_target: theano 1D tensor of shape (batch_size,)
+        the targets of a batch
+    output: theano 2D tensor of shape (batch_size, output_size)
+        the outputs of a batch
+    """
+    def __init__(self, embedding_matrix, inv_vocab):
+        name_or_names = ['simlex', 'conc', 'simlex333', 'USF', 'wordsim', 'MEN']
+        MonitoredQuantity.__init__(self, name_or_names)
+        self.embedding_matrix = embedding_matrix
+        self.inv_vocab = inv_vocab
+
         self.embedding_matrix = embedding_matrix
         self.inv_vocab = inv_vocab
 
@@ -86,10 +100,10 @@ class Simlex999(Extension):
         model_predictions = [1-spd.cosine(model_data[p[0]], model_data[p[1]])
                              for p in overlap]
         gold_predictions = [gold_standard[(p[0], p[1])] for p in overlap]
-        return spearmanr(model_predictions, gold_predictions)[0], len(overlap)
+        return spearmanr(model_predictions, gold_predictions)[0]
 
+    def calculate(self, *inputs):
 
-    def apply(self):
         raw_data = build_embedding_dictionary(
             self.embedding_matrix.get_value(), self.inv_vocab)
         vocab = [key for key in raw_data]
@@ -124,5 +138,5 @@ class Simlex999(Extension):
         wordsim_result = self.evaluate(model_data, self.gold_data_ws, vocab)
         MEN_result = self.evaluate(model_data, self.gold_data_MEN, vocab)
 
-        return [str([simlex_result, conc_result, simlex_assoc333_result,
-                     USF_result, wordsim_result, MEN_result])]
+        return [simlex_result, conc_result, simlex_assoc333_result,
+                USF_result, wordsim_result, MEN_result]
