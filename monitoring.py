@@ -272,55 +272,37 @@ class VarMonitor(Extension):
         Extension.__init__(self, name_extension, freq)
         self.mon_variables = monitored_variables
 
-        # Record names of all the variables
-        self.var_names = []
-        for var in self.mon_variables:
-            if isinstance(var.name, list):
-                self.var_names.extend(var.name)
-            else:
-                self.var_names.append(var.name)
-
-        # tensors that are monitored
-        self.mon_tensors = []
-
-        # MonitoredQuantity objects that are monitored
-        self.mon_quantities = []
-
-        # Tensors that are computed. Includes mon_tensors at the beginning of
-        # the list and the tensors required by the mon_quantities at the end.
-        self.required_tensors = self.mon_tensors  # initialization
+        # Tensors that have to be computed.
+        self.required_tensors = []  # initialization
 
         # Split tensors and quantities. Record all the tensors to be computed
+        def add_tensor(tensor, a_list):
+            try:
+                idx = self.required_tensors.index(tensor)
+                a_list.append(idx)
+            except ValueError:
+                self.required_tensors.append(tensor)
+                a_list.append(len(self.required_tensors)-1)
+
+        self.links = {}
         for var in monitored_variables:
+            links = []
             if isinstance(var, MonitoredQuantity):
-                self.mon_quantities.append(var)
-                self.required_tensors.extend(var.required_tensors)
+                for t in var.required_tensors:
+                    add_tensor(t, links)
             elif isinstance(var, theano.Variable):
-                self.mon_tensors.append(var)
+                add_tensor(var, links)
             else:
                 raise ValueError('monitored_variables should contain either '
                                  'theano tensors or MonitoredQuantity objects')
-
-        # If two quantities require the same tensors, there might be duplicates
-        self.required_tensors = remove_duplicates(self.required_tensors)
-
-        # For quantities, link them to the tensors they require
-        # quantities_links is a dictionary {quantity: links}. links is a list
-        # containing the indices of the theano tensors rquired by quantity
-        # (parameter required_tensors of MonitoredQuantity).
-        self.quantities_links = {}
-        for quantity in self.mon_quantities:
-            links = []
-            for t in quantity.required_tensors:
-                links.append(self.required_tensors.index(t))
-            self.quantities_links[quantity] = links
+            self.links[var] = links
 
         # Function that will output the values of the required tensors for
         # given inputs.
         self.f = theano.function(inputs, self.required_tensors, updates=updates)
 
         # Stores the current values of the monitored variables
-        self.current_values = np.zeros(len(self.var_names), dtype=floatX)
+        self.current_values = np.zeros(len(self.required_tensors), dtype=floatX)
         self.current_spent_time = 0
 
         # Stores all the values of the monitored variables.
@@ -350,19 +332,21 @@ class VarMonitor(Extension):
 
         # List of values of the required tensors. We have to compute the
         # quantities from them.
-        list_values = self.f(*inputs)
+        tensor_values = self.f(*inputs)
 
         # Compute the quantities from the tensor values
-        quantities = []
-        for quantity in self.mon_quantities:
-            res = quantity.calculate(
-                *[list_values[i] for i in self.quantities_links[quantity]])
+        var_values = []
+        for var in self.mon_variables:
+            values = [tensor_values[i] for i in self.links[var]]
+            if isinstance(var, theano.Variable):
+                res = values[0]
+            else:
+                res = var.calculate(*values)
             if not isinstance(res, list):
                 res = [res]
-            quantities.extend(res)
+            var_values.extend(res)
 
-        self.current_values += np.array(
-            list_values[:len(self.mon_tensors)] + quantities)
+        self.current_values += np.array(var_values)
 
         self.current_spent_time += (time.clock() - begin)
 
@@ -480,10 +464,10 @@ class Saver(Extension):
         self.file_name = file_name
 
     def execute(self, batch_id):
-        file = open(os.path.join(
+        file_handle = open(os.path.join(
             self.folder_path, self.file_name + '.pkl'), 'wb')
-        object, msg = self.compute_object()
-        cPickle.dump(object, file)
+        obj, msg = self.compute_object()
+        cPickle.dump(obj, file_handle)
         return msg
 
     def compute_object(self):
