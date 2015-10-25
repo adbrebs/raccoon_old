@@ -5,6 +5,9 @@ import cPickle
 import heapq
 import numpy as np
 import theano
+import theano.tensor as T
+import lasagne
+from lasagne.layers import get_output
 
 from utils import print_wrap, remove_duplicates
 
@@ -54,6 +57,58 @@ class MonitoredQuantity:
             strs.append('  ' + name + ': {}'.format(val))
 
 
+class LayerStatistic(MonitoredQuantity):
+    """
+    Display activations and gradient of the cost with respect to these
+    activations.
+    """
+    def __init__(self, activations, cost):
+
+        gradients = T.grad(cost, activations)
+        activations = [T.abs_(out).mean() for out in activations]
+        gradients = [T.abs_(g).mean() for g in gradients]
+        self.n_layers = len(activations)
+
+        out_names = ['output {}'.format(i) for i in range(self.n_layers)]
+        grad_names = ['grad {}'.format(i) for i in range(self.n_layers)]
+
+        names = out_names + grad_names
+        MonitoredQuantity.__init__(self, names,
+                                   activations + gradients)
+
+    def calculate(self, *inputs):
+        return inputs
+
+    def write_str(self, strs, values):
+        str_val = '(out, grad): '
+        for i in range(self.n_layers):
+            str_val += '({:.3g}, {:.3g}) '.format(
+                values[i], values[i+self.n_layers])
+        strs.append(str_val)
+
+
+class UpdateRatio(MonitoredQuantity):
+    def __init__(self, updates):
+
+        self.d_names = []
+        ratios = []
+        for a, b in updates.iteritems():
+            ratios.append(T.abs_((a - b) / a).mean())
+            self.d_names.append(a.name)
+
+        names = ['ratio {}'.format(i) for i in range(len(ratios))]
+        MonitoredQuantity.__init__(self, names, ratios)
+
+    def calculate(self, *inputs):
+        return inputs
+
+    def write_str(self, strs, values):
+        str_val = 'ratios: '
+        for name, v in zip(self.d_names, values):
+            str_val += '({}, {:.3g}) '.format(name, v)
+        strs.append(str_val)
+
+
 class KErrorRate(MonitoredQuantity):
     """
     Computes the k error rate for a classification model.
@@ -70,8 +125,7 @@ class KErrorRate(MonitoredQuantity):
         MonitoredQuantity.__init__(self, name_or_names, [idx_target, output])
         self.k = k
 
-    def calculate(self, *inputs):
-        idx_target, output = inputs
+    def calculate(self, idx_target, output):
 
         bs, out_dim = output.shape
 
@@ -341,7 +395,7 @@ class VarMonitor(Extension):
                 res = values[0]
             else:
                 res = var.calculate(*values)
-            if not isinstance(res, list):
+            if not isinstance(res, (list, tuple)):
                 res = [res]
             var_values.extend(res)
 
