@@ -31,7 +31,10 @@ class MonitoredQuantity:
         if specified, the values of these tensors will be provided to the
     """
     def __init__(self, name_or_names, required_tensors=None):
-        self.name = name_or_names
+        if not isinstance(name_or_names, list):
+            name_or_names = [name_or_names]
+        self.names = name_or_names
+        self.n_outputs = len(name_or_names)
         if not required_tensors:
             required_tensors = []
         self.required_tensors = required_tensors
@@ -45,6 +48,10 @@ class MonitoredQuantity:
         Returns either a single value of a list of values
         """
         pass
+
+    def write_str(self, strs, values):
+        for name, val in zip(self.names, values):
+            strs.append('  ' + name + ': {}'.format(val))
 
 
 class KErrorRate(MonitoredQuantity):
@@ -234,18 +241,10 @@ class ExtVarMonitor(Extension):
     def get_str(self):
         strs = []
         c = 0
-        for i, var in enumerate(self.mon_quantities):
-            if isinstance(var.name, list):
-                strs.append('Computed together in {:.3g} seconds:'.format(
-                    self.current_spent_time[i]))
-                for name in var.name:
-                    strs.append('  ' + name + ': {}'.format(
-                        self.current_values[c]))
-                    c += 1
-            else:
-                strs.append(var.name + ': [{:.3g} seconds] {}'.format(
-                    self.current_spent_time[i], self.current_values[c]))
-                c += 1
+        for timing, var in zip(self.current_spent_time, self.mon_quantities):
+            strs.append('Computed in {:.3g} seconds:'.format(timing))
+            var.write_str(strs, self.current_values[c:c+var.n_outputs])
+            c += var.n_outputs
 
         return strs
 
@@ -355,10 +354,9 @@ class VarMonitor(Extension):
             1000 * self.current_spent_time)]
         c = 0
         for var in self.mon_variables:
-            if isinstance(var.name, list):
-                for name in var.name:
-                    strs.append(name + ': {}'.format(self.current_values[c]))
-                    c += 1
+            if isinstance(var, MonitoredQuantity):
+                var.write_str(strs, self.current_values[c:c+var.n_outputs])
+                c += var.n_outputs
             else:
                 strs.append(var.name + ': {}'.format(self.current_values[c]))
                 c += 1
