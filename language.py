@@ -1,3 +1,7 @@
+"""
+Extensions and quantities designed for NLP
+"""
+
 import os
 
 import numpy as np
@@ -5,11 +9,15 @@ import scipy.spatial.distance as spd
 from scipy.stats import spearmanr
 import heapq
 
-from nlm.utilities import build_embedding_dictionary
-from monitoring import Extension, MonitoredQuantity
+from utils import build_embedding_dictionary
+from extensions import Extension
+from quantities import MonitoredQuantity
 
 
 class MostSimilarWords(Extension):
+    """
+    Computes the nearest neighbours of some words in an embedding matrix
+    """
     def __init__(self, freq, words, embedding_matrix, knn, vocab, inv_vocab):
         Extension.__init__(self, 'Nearest neighbours of words', freq)
         self.words = words
@@ -38,13 +46,7 @@ class MostSimilarWords(Extension):
 
 class WordEmbeddingScores(MonitoredQuantity):
     """
-    Computes the k error rate for a classification model.
-    Parameters
-    ----------
-    idx_target: theano 1D tensor of shape (batch_size,)
-        the targets of a batch
-    output: theano 2D tensor of shape (batch_size, output_size)
-        the outputs of a batch
+    Parts are taken from the MILA servers. I don't know the precise author.
     """
     def __init__(self, embedding_matrix, inv_vocab):
         name_or_names = ['simlex', 'conc', 'simlex333', 'USF', 'wordsim', 'MEN']

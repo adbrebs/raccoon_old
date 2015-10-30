@@ -1,158 +1,28 @@
-import sys
 import os
 import time
 import cPickle
-import heapq
 import numpy as np
 import theano
-import theano.tensor as T
-import lasagne
-from lasagne.layers import get_output
 
-from utils import print_wrap, remove_duplicates
+from quantities import MonitoredQuantity
 
 floatX = theano.config.floatX
 
 
-class MonitoredQuantity:
-    """
-    This class allows to monitor quantities that are not theano tensors.
-    These quantities can be calculated from computed tensor values returned by
-    the trainer object. These theano tensors have to be indicated in
-    required_tensors.
-
-    If there are multiple quantities computed, name has to be a list with as
-    many names as quantities returned by the calculate.
-
-    See KErrorRate for an example.
-
-    Parameters:
-    -----------
-    name_or_names: str or list of strings
-        names of the quantities being computed
-    required_tensors: list of Theano tensors (default=None)
-        if specified, the values of these tensors will be provided to the
-    """
-    def __init__(self, name_or_names, required_tensors=None):
-        if not isinstance(name_or_names, list):
-            name_or_names = [name_or_names]
-        self.names = name_or_names
-        self.n_outputs = len(name_or_names)
-        if not required_tensors:
-            required_tensors = []
-        self.required_tensors = required_tensors
-
-    def calculate(self, *inputs):
-        """
-        inputs is a list of the computed tensor values returned by the trainer.
-        The order of the inputs is the SAME as the order provided in
-        required_tensors.
-
-        Returns either a single value of a list of values
-        """
-        pass
-
-    def write_str(self, strs, values):
-        for name, val in zip(self.names, values):
-            strs.append('  ' + name + ': {}'.format(val))
-
-
-class LayerStatistic(MonitoredQuantity):
-    """
-    Display activations and gradient of the cost with respect to these
-    activations.
-    """
-    def __init__(self, activations, cost):
-
-        gradients = T.grad(cost, activations)
-        activations = [T.abs_(out).mean() for out in activations]
-        gradients = [T.abs_(g).mean() for g in gradients]
-        self.n_layers = len(activations)
-
-        out_names = ['output {}'.format(i) for i in range(self.n_layers)]
-        grad_names = ['grad {}'.format(i) for i in range(self.n_layers)]
-
-        names = out_names + grad_names
-        MonitoredQuantity.__init__(self, names,
-                                   activations + gradients)
-
-    def calculate(self, *inputs):
-        return inputs
-
-    def write_str(self, strs, values):
-        str_val = '(out, grad): '
-        for i in range(self.n_layers):
-            str_val += '({:.3g}, {:.3g}) '.format(
-                values[i], values[i+self.n_layers])
-        strs.append(str_val)
-
-
-class UpdateRatio(MonitoredQuantity):
-    def __init__(self, updates):
-
-        self.d_names = []
-        ratios = []
-        for a, b in updates.iteritems():
-            ratios.append(T.abs_((a - b) / a).mean())
-            self.d_names.append(a.name)
-
-        names = ['ratio {}'.format(i) for i in range(len(ratios))]
-        MonitoredQuantity.__init__(self, names, ratios)
-
-    def calculate(self, *inputs):
-        return inputs
-
-    def write_str(self, strs, values):
-        str_val = 'ratios: '
-        for name, v in zip(self.d_names, values):
-            str_val += '({}, {:.3g}) '.format(name, v)
-        strs.append(str_val)
-
-
-class KErrorRate(MonitoredQuantity):
-    """
-    Computes the k error rate for a classification model.
-
-    Parameters
-    ----------
-    idx_target: theano 1D tensor of shape (batch_size,)
-        the targets of a batch
-    output: theano 2D tensor of shape (batch_size, output_size)
-        the outputs of a batch
-    """
-    def __init__(self, idx_target, output, k):
-        name_or_names = '{} error rate'.format(k)
-        MonitoredQuantity.__init__(self, name_or_names, [idx_target, output])
-        self.k = k
-
-    def calculate(self, idx_target, output):
-
-        bs, out_dim = output.shape
-
-        err_rate = 0
-        for i in range(bs):
-            idxs = heapq.nlargest(self.k, range(out_dim), output[i].take)
-            if idx_target[i] not in idxs:
-                err_rate += 1.0
-
-        return err_rate / bs
-
-
 class Extension(object):
-    """
+    """ Abstract class
     Extensions are objects regularly called during the training process.
     More precisely, their check method will be called every freq batches.
-    If you inherit from Extension, the only method you should implement are
+    If you inherit from Extension, the only methods you should implement are
     __init__ and execute.
 
-    It has to be registered to a Trainer object, either as an extension or as
-    and ending condition.
+    It has to be registered to a :class:`Trainer` object.
 
     Parameters
     ----------
-    name_extension : string
+    name_extension: string
         The name of the extension
-    freq : int
+    freq: int
         The frequency with which the extension is called
     apply_at_the_end: bool, default False
         Apply the extension at the end of training or when training is
@@ -165,8 +35,8 @@ class Extension(object):
 
     def check(self, batch_id):
         """
-        This method is called by the trainer object at every batch during
-        training.
+        This method is called by the :class:`Trainer` object at every batch
+        during training.
 
         Returns
         -------
@@ -190,7 +60,7 @@ class Extension(object):
 
 
 class EndCondition(object):
-    """Class responsible for terminating the training.
+    """Abstract class responsible for terminating the training.
 
     It has to be registered to a Trainer object.
 
@@ -250,7 +120,28 @@ class MaxTime(EndCondition):
         return False
 
 
-class ExtVarMonitor(Extension):
+class Monitor(Extension):
+    """
+    Base class for monitoring different types of variables:
+    - external variables that do not depend on theano tensors: you should use
+        :class:`ExternalVarMonitor`.
+    - variables that depend directly on theano tensors computed during training:
+        you should use :class:`TrainMonitor`.
+    - variables that depend on theano tensors computed on another dataset or
+        stream: you should use :class:`ValMonitor`.
+    """
+    def __init__(self, name_extension, freq, monitored_var):
+        Extension.__init__(self, name_extension, freq)
+        self.monitored_var = monitored_var
+
+    def execute(self, batch_id):
+        raise NotImplementedError
+
+    def get_str(self):
+        raise NotImplementedError
+
+
+class ExternalVarMonitor(Monitor):
     """Extension to monitor MonitoredQuantity objects that don't depend
     on theano tensors.
 
@@ -260,9 +151,8 @@ class ExtVarMonitor(Extension):
         the list of quantities to be monitored. These quantities should not
         require any theano tensor values to be computed.
     """
-    def __init__(self, name_extension, freq, monitored_quantities):
-        Extension.__init__(self, name_extension, freq)
-        self.mon_quantities = monitored_quantities
+    def __init__(self, name_extension, freq, monitored_var):
+        Monitor.__init__(self, name_extension, freq, monitored_var)
 
         # Stores the current values of the monitored quantities
         self.current_values = None
@@ -273,11 +163,11 @@ class ExtVarMonitor(Extension):
         self.iterations = []
 
     def execute(self, batch_id):
-        self.current_spent_time = np.zeros(len(self.mon_quantities))
+        self.current_spent_time = np.zeros(len(self.monitored_var))
 
         # Compute the quantities from the tensor values
         quantities = []
-        for i, quantity in enumerate(self.mon_quantities):
+        for i, quantity in enumerate(self.monitored_var):
             begin = time.clock()
             res = quantity.calculate()
             self.current_spent_time[i] = time.clock() - begin
@@ -295,17 +185,17 @@ class ExtVarMonitor(Extension):
     def get_str(self):
         strs = []
         c = 0
-        for timing, var in zip(self.current_spent_time, self.mon_quantities):
+        for timing, var in zip(self.current_spent_time, self.monitored_var):
             strs.append('Computed in {:.3g} seconds:'.format(timing))
-            var.write_str(strs, self.current_values[c:c+var.n_outputs])
+            var.write_str(strs, self.current_values[c:c+var.n_outputs], '  ')
             c += var.n_outputs
 
         return strs
 
 
-class VarMonitor(Extension):
-    """Extension to monitor theano tensors or MonitoredQuantity objects that
-    depend on theano tensor values.
+class VarMonitor(Monitor):
+    """Extension to monitor theano tensors or :class:`MonitoredQuantity`
+    objects.
 
     It compiles a theano function internally.
 
@@ -322,14 +212,29 @@ class VarMonitor(Extension):
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
                  updates=None):
-        Extension.__init__(self, name_extension, freq)
-        self.mon_variables = monitored_variables
+        Monitor.__init__(self, name_extension, freq, monitored_variables)
+
+        # Total number of outputs (some monitored variables may have several
+        # outputs). output_links {var: indices of outputs} links each variable
+        # to the indices of its corresponding outputs
+        self.n_outputs = 0
+        self.output_links = {}
+        for var in monitored_variables:
+            if isinstance(var, MonitoredQuantity):
+                n = var.n_outputs
+            elif isinstance(var, theano.Variable):
+                n = 1
+            self.output_links[var] = range(self.n_outputs, self.n_outputs + n)
+            self.n_outputs += n
 
         # Tensors that have to be computed.
         self.required_tensors = []  # initialization
 
-        # Split tensors and quantities. Record all the tensors to be computed
         def add_tensor(tensor, a_list):
+            """Adds a tensor to self.required_tensors if it is not already
+            there. It also adds to the index of tensor in self.required_tensors
+            to the provided list a_list.
+            """
             try:
                 idx = self.required_tensors.index(tensor)
                 a_list.append(idx)
@@ -337,7 +242,10 @@ class VarMonitor(Extension):
                 self.required_tensors.append(tensor)
                 a_list.append(len(self.required_tensors)-1)
 
-        self.links = {}
+        # input_links is a dictionary {var: list of indices}. Each element
+        # contains the indices of the tensors required to compute var from from
+        # required_tensors
+        self.input_links = {}
         for var in monitored_variables:
             links = []
             if isinstance(var, MonitoredQuantity):
@@ -348,14 +256,15 @@ class VarMonitor(Extension):
             else:
                 raise ValueError('monitored_variables should contain either '
                                  'theano tensors or MonitoredQuantity objects')
-            self.links[var] = links
+            self.input_links[var] = links
 
         # Function that will output the values of the required tensors for
         # given inputs.
         self.f = theano.function(inputs, self.required_tensors, updates=updates)
 
-        # Stores the current values of the monitored variables
-        self.current_values = np.zeros(len(self.required_tensors), dtype=floatX)
+        # Containers to store the current values of the monitored variables and
+        # the computational time.
+        self.current_values = np.zeros(self.n_outputs, dtype=floatX)
         self.current_spent_time = 0
 
         # Stores all the values of the monitored variables.
@@ -389,8 +298,8 @@ class VarMonitor(Extension):
 
         # Compute the quantities from the tensor values
         var_values = []
-        for var in self.mon_variables:
-            values = [tensor_values[i] for i in self.links[var]]
+        for var in self.monitored_var:
+            values = [tensor_values[i] for i in self.input_links[var]]
             if isinstance(var, theano.Variable):
                 res = values[0]
             else:
@@ -400,14 +309,13 @@ class VarMonitor(Extension):
             var_values.extend(res)
 
         self.current_values += np.array(var_values)
-
         self.current_spent_time += (time.clock() - begin)
 
     def get_str(self):
         strs = ['timing: {:.3g} seconds spent for 1000 batches'.format(
             1000 * self.current_spent_time)]
         c = 0
-        for var in self.mon_variables:
+        for var in self.monitored_var:
             if isinstance(var, MonitoredQuantity):
                 var.write_str(strs, self.current_values[c:c+var.n_outputs])
                 c += var.n_outputs
@@ -420,7 +328,8 @@ class VarMonitor(Extension):
 
 class ValMonitor(VarMonitor):
     """
-    Extension to monitor tensor variables on an external fuel stream.
+    Extension to monitor tensor variables and MonitoredQuantity objects on an
+    external fuel stream.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
                  stream):
@@ -440,6 +349,10 @@ class ValMonitor(VarMonitor):
 
 
 class TrainMonitor(VarMonitor):
+    """
+    Extension required by `class:Trainer` to process_batch updates and monitor
+    tensor variables and MonitoredQuantity objects.
+    """
     def __init__(self, freq, inputs, monitored_variables, updates):
         VarMonitor.__init__(self, 'Training', freq, inputs,
                             monitored_variables, updates)
@@ -454,27 +367,53 @@ class TrainMonitor(VarMonitor):
 
 class LearningRateDecay(Extension, EndCondition):
     """
-    If does not improve for absolute_patience, then the training stops
+    Both extension and ending condition that decreases the learning rate if
+    there is no improvement on a variable monitored by a monitoring extension.
+    If does not improve for absolute_patience, then the training stops.
+
+    The frequence of this extension is the same as the :class:`Monitor` monitor
+    parameter.
+
+    Parameters:
+    -----------
+    monitor: :class:`Monitor` object
+        :class:`Monitor` object which computes the variable you are
+        interested in.
+    var: MonitoredQuantity or tensor variable
+        the MonitoredQuantity or tensor variable of :class:`Monitor` that you
+        are interested in.
+    idx: int, default=0
+        if var computes several outputs, this index selects a single one.
+    learning_rate: theano shared variable
+        the variable storing the current learning rate
+    patience: int, default=5
+        the number of times we allow the variable to not improve before
+        decreasing the learning rate
+    max_patience: int, default=7
+        the number of times we allow the variables to not improve before we
+        stop the training.
+    decay_rate: float, default=2.0
+        the rate at which the learning rate is decreased
+    min_value: float
+        the minimal value that we tolerate for the learning rate. Below it, we
+        stop training.
     """
-    def __init__(self, val_monitor, var_name, learning_rate, patience=5,
+    def __init__(self, monitor, var, learning_rate, idx=0, patience=5,
                  max_patience=7, decay_rate=2., min_value=1e-12):
-        Extension.__init__(self, 'Learning rate', val_monitor.freq)
-        EndCondition.__init__(self, 'Learning rate', val_monitor.freq)
-        self.var_name = var_name
+        Extension.__init__(self, 'Learning rate', monitor.freq)
+        EndCondition.__init__(self, 'Learning rate', monitor.freq)
+        self.var = var
         self.lr = learning_rate
         self.patience = patience
         self.absolute_patience = max_patience
         self.decay_rate = decay_rate
         self.waiting = 0
         self.absolute_waiting = 0
-        self.val_monitor = val_monitor
+        self.val_monitor = monitor
         self.min_value = min_value
 
-        # Determine index of var_name in val_monitor
-        for i, var in enumerate(val_monitor.mon_variables):
-            if var.name == var_name:
-                self.var_idx = i
-                break
+        # Index of the variable to check in the monitoring extension
+        self.var_idx = monitor.output_links[var][idx]
 
         self.best_value = np.inf
 
@@ -496,11 +435,9 @@ class LearningRateDecay(Extension, EndCondition):
         return strs
 
     def check_condition_virtual(self, batch_id):
-        current_value = self.val_monitor.history[-1][self.var_idx]
-
         if self.absolute_waiting > self.absolute_patience:
             return ['Patience exceeded']
-        if current_value < self.min_value:
+        if self.lr.get_value() < self.min_value:
             return ['Learning rate too small']
         return False
 
@@ -508,7 +445,7 @@ class LearningRateDecay(Extension, EndCondition):
 class Saver(Extension):
     """Extension to pickle objects.
 
-    Only the compute_object method should be re-implemented.
+    Only the compute_object method should be overwritten.
     """
     def __init__(self, name_extension, freq, folder_path, file_name):
         super(Saver, self).__init__(name_extension, freq, apply_at_the_end=True)
@@ -528,7 +465,7 @@ class Saver(Extension):
         saved. The second element is a list of strings, each string
         representing a line to be printed when the extension is executed.
         """
-        return None, None
+        raise NotImplementedError
 
 
 class NetworkSaver(Saver):
@@ -559,64 +496,3 @@ class VariableSaver(Saver):
         np_iterations = np.array(self.var_monitor.iterations)
         return ((np_iterations, np_history),
                 ['Variable histories dumped into {}'.format(self.folder_path)])
-
-
-class Trainer:
-    def __init__(self, train_monitor, extensions, end_conditions):
-        self.train_monitor = train_monitor
-        self.extensions = [train_monitor] + extensions
-        self.end_conditions = end_conditions
-
-    def print_extensions_logs(self, extensions_logs):
-        for i, logs in enumerate(extensions_logs):
-            # If extension has not ran, we don't print anything
-            if not logs:
-                continue
-
-            print print_wrap(
-                '{}:'.format(self.extensions[i].name_extension), 1)
-            for line in logs:
-                print print_wrap(line, 2)
-
-    def print_end_conditions_logs(self, cond_logs):
-        for i, logs in enumerate(cond_logs):
-            # If extension has not ran, we don't print anything
-            if not logs:
-                continue
-
-            print print_wrap(
-                '{}:'.format(self.end_conditions[i].name), 1)
-            for line in logs:
-                print print_wrap(line, 2)
-
-    def apply(self, epoch, iteration, *inputs):
-        self.train_monitor.train(*inputs)
-
-        if iteration == 0:
-            return False
-
-        extensions_logs = [ext.check(iteration) for ext in self.extensions]
-        cond_logs = [cond.check_condition(iteration)
-                     for cond in self.end_conditions]
-
-        # If no extensions are active
-        if not any(extensions_logs) and not any(cond_logs):
-            return False
-
-        print 'Epoch {}, iteration {}:'.format(epoch, iteration)
-        self.print_extensions_logs(extensions_logs)
-        self.print_end_conditions_logs(cond_logs)
-        print '-'*79
-        sys.stdout.flush()  # Important if output is redirected
-
-        if any(cond_logs):
-            return True
-        return False
-
-    def finish(self, batch_id):
-        print 'Training finished'
-        print 'Computing extensions...',
-        print 'Done!'
-        extensions_logs = [ext.execute(batch_id)
-                           for ext in self.extensions if ext.apply_at_the_end]
-        self.print_extensions_logs(extensions_logs)
