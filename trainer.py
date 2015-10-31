@@ -32,10 +32,9 @@ class Trainer:
                 print print_wrap(line, 2)
 
     def process_batch(self, epoch, iteration, *inputs):
-        self.train_monitor.train(*inputs)
 
-        if iteration == 0:
-            return False
+        if iteration != 0:
+            self.train_monitor.train(*inputs)
 
         extensions_logs = [ext.check(iteration) for ext in self.extensions]
         cond_logs = [cond.check_condition(iteration)

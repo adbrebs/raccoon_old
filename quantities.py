@@ -67,16 +67,22 @@ class LayerStatistic(MonitoredQuantity):
     def __init__(self, activations, cost):
 
         gradients = T.grad(cost, activations)
-        activations = [T.abs_(out).mean() for out in activations]
-        gradients = [T.abs_(g).mean() for g in gradients]
+        act_mean = [out.mean() for out in activations]
+        act_var = [out.std(axis=1).mean() for out in activations]
+        grad_mean = [g.mean() for g in gradients]
+        grad_var = [g.std(axis=1).mean() for g in gradients]
         self.n_layers = len(activations)
 
-        out_names = ['output {}'.format(i) for i in range(self.n_layers)]
-        grad_names = ['grad {}'.format(i) for i in range(self.n_layers)]
+        out_names = []
+        grad_names = []
+        out_names += ['mean act {}'.format(i) for i in range(self.n_layers)]
+        out_names += ['std act {}'.format(i) for i in range(self.n_layers)]
+        grad_names += ['mean grad {}'.format(i) for i in range(self.n_layers)]
+        grad_names += ['std grad {}'.format(i) for i in range(self.n_layers)]
 
         names = out_names + grad_names
         MonitoredQuantity.__init__(self, names,
-                                   activations + gradients)
+                                   act_mean + act_var + grad_mean + grad_var)
 
     def calculate(self, *inputs):
         return inputs
@@ -87,8 +93,9 @@ class LayerStatistic(MonitoredQuantity):
         """
         str_val = '(out, grad): '
         for i in range(self.n_layers):
-            str_val += '({:.3g}, {:.3g}) '.format(
-                values[i], values[i+self.n_layers])
+            str_val += '([{:.3g}, {:.3g}], [{:.3g}, {:.3g}]) '.format(
+                values[i], values[i+self.n_layers], values[i+2*self.n_layers],
+            values[i+3*self.n_layers])
         strs.append(str_val)
 
 
