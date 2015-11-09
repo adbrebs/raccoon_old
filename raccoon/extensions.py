@@ -3,6 +3,7 @@ import time
 import cPickle
 import numpy as np
 import theano
+from lasagne.layers import get_all_param_values, set_all_param_values
 
 from quantities import MonitoredQuantity
 
@@ -43,9 +44,9 @@ class Extension(object):
         list of strings or None
             None should be returned when the extension is not executed.
         """
-        if not batch_id % self.freq:
-            return self.execute(batch_id)
-        return None
+        if self.freq and not batch_id % self.freq:
+            return True
+        return False
 
     def execute(self, batch_id):
         """The method that is called when the extension is executed.
@@ -130,8 +131,8 @@ class Monitor(Extension):
     - variables that depend on theano tensors computed on another dataset or
         stream: you should use :class:`ValMonitor`.
     """
-    def __init__(self, name_extension, freq, monitored_var):
-        Extension.__init__(self, name_extension, freq)
+    def __init__(self, name_extension, freq, monitored_var, **kwargs):
+        Extension.__init__(self, name_extension, freq, **kwargs)
         self.monitored_var = monitored_var
 
     def execute(self, batch_id):
@@ -151,8 +152,8 @@ class ExternalVarMonitor(Monitor):
         the list of quantities to be monitored. These quantities should not
         require any theano tensor values to be computed.
     """
-    def __init__(self, name_extension, freq, monitored_var):
-        Monitor.__init__(self, name_extension, freq, monitored_var)
+    def __init__(self, name_extension, freq, monitored_var, **kwargs):
+        Monitor.__init__(self, name_extension, freq, monitored_var, **kwargs)
 
         # Stores the current values of the monitored quantities
         self.current_values = None
@@ -211,8 +212,9 @@ class VarMonitor(Monitor):
         Updates fo be performed by the theano function.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
-                 updates=None):
-        Monitor.__init__(self, name_extension, freq, monitored_variables)
+                 updates=None, **kwargs):
+        Monitor.__init__(self, name_extension, freq, monitored_variables,
+                         **kwargs)
 
         # Total number of outputs (some monitored variables may have several
         # outputs). output_links {var: indices of outputs} links each variable
@@ -278,6 +280,7 @@ class VarMonitor(Monitor):
         self.iterations.append(batch_id)
         # Reset current_values to zero for the next raccoon cycle
         self.current_values = np.zeros_like(self.current_values)
+        self.current_spent_time = 0
         return strs
 
     def compute_current_values(self):
@@ -312,8 +315,7 @@ class VarMonitor(Monitor):
         self.current_spent_time += (time.clock() - begin)
 
     def get_str(self):
-        strs = ['timing: {:.3g} seconds spent for 1000 batches'.format(
-            1000 * self.current_spent_time)]
+        strs = ['timing: {:.3g} seconds'.format(self.current_spent_time)]
         c = 0
         for var in self.monitored_var:
             if isinstance(var, MonitoredQuantity):
@@ -332,9 +334,9 @@ class ValMonitor(VarMonitor):
     external fuel stream.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
-                 stream):
+                 stream, **kwargs):
         VarMonitor.__init__(self, name_extension, freq, inputs,
-                            monitored_variables)
+                            monitored_variables, **kwargs)
         self.stream = stream
 
     def compute_current_values(self):
@@ -345,7 +347,6 @@ class ValMonitor(VarMonitor):
             c += 1
 
         self.current_values /= c
-        self.current_spent_time /= c
 
 
 class TrainMonitor(VarMonitor):
@@ -353,13 +354,12 @@ class TrainMonitor(VarMonitor):
     Extension required by `class:Trainer` to process_batch updates and monitor
     tensor variables and MonitoredQuantity objects.
     """
-    def __init__(self, freq, inputs, monitored_variables, updates):
+    def __init__(self, freq, inputs, monitored_variables, updates, **kwargs):
         VarMonitor.__init__(self, 'Training', freq, inputs,
-                            monitored_variables, updates)
+                            monitored_variables, updates, **kwargs)
 
     def compute_current_values(self):
         self.current_values /= self.freq
-        self.current_spent_time /= self.freq
 
     def train(self, *inputs):
         self.inc_values(*inputs)
@@ -384,7 +384,7 @@ class LearningRateDecay(Extension, EndCondition):
         are interested in.
     idx: int, default=0
         if var computes several outputs, this index selects a single one.
-    learning_rate: theano shared variable
+    learning_rate: theano shared variable or float
         the variable storing the current learning rate
     patience: int, default=5
         the number of times we allow the variable to not improve before
@@ -397,12 +397,16 @@ class LearningRateDecay(Extension, EndCondition):
     min_value: float
         the minimal value that we tolerate for the learning rate. Below it, we
         stop training.
+    network: lasagne layer
+        if you want the best network to be saved.
     """
     def __init__(self, monitor, var, learning_rate, idx=0, patience=5,
-                 max_patience=7, decay_rate=2., min_value=1e-12):
+                 max_patience=7, decay_rate=2., min_value=1e-12, network=None):
         Extension.__init__(self, 'Learning rate', monitor.freq)
         EndCondition.__init__(self, 'Learning rate', monitor.freq)
         self.var = var
+        if not isinstance(learning_rate, theano.Variable):
+            learning_rate = theano.shared(learning_rate, 'learning_rate')
         self.lr = learning_rate
         self.patience = patience
         self.absolute_patience = max_patience
@@ -411,6 +415,9 @@ class LearningRateDecay(Extension, EndCondition):
         self.absolute_waiting = 0
         self.val_monitor = monitor
         self.min_value = min_value
+
+        self.network = network
+        self.best_params = None
 
         # Index of the variable to check in the monitoring extension
         self.var_idx = monitor.output_links[var][idx]
@@ -423,23 +430,34 @@ class LearningRateDecay(Extension, EndCondition):
             self.best_value = current_value
             self.waiting = 0
             self.absolute_waiting = 0
+            if self.network:
+                self.best_params = get_all_param_values(self.network)
         else:
             self.waiting += 1
             self.absolute_waiting += 1
-        strs = ['Learning rate: {}, waiting {}/{}'.format(
-            self.lr.get_value(), self.waiting, self.patience)]
+        strs = ['Learning rate: {}, waiting {}/{}, best {}'.format(
+            self.lr.get_value(), self.waiting, self.patience, self.best_value)]
         if self.waiting > self.patience:
             self.lr.set_value(self.lr.get_value()/self.decay_rate)
             self.waiting = 0
-            strs.append('Learning rate decreased')
+            msg = 'Learning rate decreased'
+            if self.network:
+                set_all_param_values(self.network, self.best_params)
+                msg += '... best network re-loaded'
+            strs.append(msg)
         return strs
 
     def check_condition_virtual(self, batch_id):
+        res = False
         if self.absolute_waiting > self.absolute_patience:
-            return ['Patience exceeded']
-        if self.lr.get_value() < self.min_value:
-            return ['Learning rate too small']
-        return False
+            res = ['Patience exceeded']
+        elif self.lr.get_value() < self.min_value:
+            res = ['Learning rate too small']
+
+        if res and self.network:
+            set_all_param_values(self.network, self.best_params)
+
+        return res
 
 
 class Saver(Extension):
@@ -491,8 +509,15 @@ class VariableSaver(Saver):
                                             folder_path, file_name)
         self.var_monitor = var_monitor
 
+        self.var_names = []
+        for var in self.var_monitor.monitored_var:
+            if isinstance(var, MonitoredQuantity):
+                self.var_names.extend(var.names)
+            else:
+                self.var_names.append(var.name)
+
     def compute_object(self):
         np_history = np.array(self.var_monitor.history)
         np_iterations = np.array(self.var_monitor.iterations)
-        return ((np_iterations, np_history),
+        return ((np_iterations, np_history, self.var_names),
                 ['Variable histories dumped into {}'.format(self.folder_path)])
