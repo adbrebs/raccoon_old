@@ -61,7 +61,7 @@ class Trainer:
         self.total_time = time.clock() - self.total_time
         print 'Training finished after {} seconds'.format(self.total_time)
         print 'Computing extensions...',
-        print 'Done!'
         extensions_logs = [(ext, ext.execute(batch_id))
                            for ext in self.extensions if ext.apply_at_the_end]
+        print 'Done!'
         self.print_extensions_logs(extensions_logs)

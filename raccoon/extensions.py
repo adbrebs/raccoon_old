@@ -340,10 +340,9 @@ class ValMonitor(VarMonitor):
         self.stream = stream
 
     def compute_current_values(self):
-        iterator = self.stream.get_epoch_iterator()
         c = 0.0
-        for batch_input, target_input in iterator:
-            self.inc_values(batch_input, target_input[:, 0])
+        for batch_input, target_input in self.stream():
+            self.inc_values(batch_input, target_input)
             c += 1
 
         self.current_values /= c
@@ -435,8 +434,10 @@ class LearningRateDecay(Extension, EndCondition):
         else:
             self.waiting += 1
             self.absolute_waiting += 1
-        strs = ['Learning rate: {}, waiting {}/{}, best {}'.format(
-            self.lr.get_value(), self.waiting, self.patience, self.best_value)]
+        strs = ['Learning rate: {}, waiting {}/{}, absolute waiting {}/{}, '
+                'best {}'.format(
+            self.lr.get_value(), self.waiting, self.patience,
+            self.absolute_waiting, self.absolute_patience, self.best_value)]
         if self.waiting > self.patience:
             self.lr.set_value(self.lr.get_value()/self.decay_rate)
             self.waiting = 0
@@ -450,13 +451,16 @@ class LearningRateDecay(Extension, EndCondition):
     def check_condition_virtual(self, batch_id):
         res = False
         if self.absolute_waiting > self.absolute_patience:
-            res = ['Patience exceeded']
+            res = 'Patience exceeded'
         elif self.lr.get_value() < self.min_value:
-            res = ['Learning rate too small']
+            res = 'Learning rate too small'
 
         if res and self.network:
             set_all_param_values(self.network, self.best_params)
+            res += '... best network re-loaded'
 
+        if res:
+            res = [res]
         return res
 
 
