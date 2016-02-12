@@ -15,7 +15,7 @@ class Extension(object):
     Extensions are objects regularly called during the training process.
     More precisely, their check method will be called every freq batches.
     If you inherit from Extension, the only methods you should implement are
-    __init__ and execute.
+    __init__ and execute_virtual.
 
     It has to be registered to a :class:`Trainer` object.
 
@@ -29,10 +29,12 @@ class Extension(object):
         Apply the extension at the end of training or when training is
         interrupted
     """
-    def __init__(self, name_extension, freq, apply_at_the_end=False):
+    def __init__(self, name_extension, freq,
+                 apply_at_the_end=False, apply_at_the_start=False):
         self.name_extension = name_extension
         self.freq = freq
         self.apply_at_the_end = apply_at_the_end
+        self.apply_at_the_start = apply_at_the_start
 
     def check(self, batch_id):
         """
@@ -44,9 +46,12 @@ class Extension(object):
         list of strings or None
             None should be returned when the extension is not executed.
         """
-        if self.freq and not batch_id % self.freq:
+        if self.freq and not batch_id % self.freq and self.condition(batch_id):
             return True
         return False
+
+    def condition(self, batch_id):
+        return True
 
     def execute(self, batch_id):
         """The method that is called when the extension is executed.
@@ -57,7 +62,21 @@ class Extension(object):
             The lines to be printed during training. They will automatically be
             indented.
         """
+        ts = time.time()
+        result = self.execute_virtual(batch_id)
+        te = time.time()
+        return te-ts, result
+
+    def execute_virtual(self, batch_id):
+        """The
+        """
         return ['Extension was executed']
+
+    def start(self):
+        return self.execute(0)
+
+    def finish(self, bath_id):
+        return self.execute(bath_id)
 
 
 class EndCondition(object):
@@ -135,7 +154,7 @@ class Monitor(Extension):
         Extension.__init__(self, name_extension, freq, **kwargs)
         self.monitored_var = monitored_var
 
-    def execute(self, batch_id):
+    def execute_virtual(self, batch_id):
         raise NotImplementedError
 
     def get_str(self):
@@ -163,7 +182,7 @@ class ExternalVarMonitor(Monitor):
         self.history = []
         self.iterations = []
 
-    def execute(self, batch_id):
+    def execute_virtual(self, batch_id):
         self.current_spent_time = np.zeros(len(self.monitored_var))
 
         # Compute the quantities from the tensor values
@@ -206,13 +225,33 @@ class VarMonitor(Monitor):
     ----------
     inputs: list of theano tensors
         tensors necessary to compute the monitored_variables
-    monitored_variables : list of theano tensors or MonitoredQuantity objects
-        the list of variables that are monitored by this extension
+    monitored_variables : a list of either (a) theano tensors or
+        MonitoredQuantity objects or (b) a tuples of (theano tensor or
+        MonitoredQuantity object, aggregation function)
+        the list of variables that are monitored by this extension.
+        aggregation functions allow to modify the way the scores are
+        aggregated over minibatches. If not provided, the default function is
+        lambda x, n_batches: x / float(n_batches)
     updates: list of theano updates, optional, default=None
         Updates fo be performed by the theano function.
     """
-    def __init__(self, name_extension, freq, inputs, monitored_variables,
+    def __init__(self, name_extension, freq, inputs, monitored_variables_fun,
                  updates=None, **kwargs):
+
+        # Divide monitored variables and corresponding aggregation schemes
+        aggregation_functions = []
+        monitored_variables = []
+        default_agg = lambda x, n_batches: x / float(n_batches)
+        for i, mon_var in enumerate(monitored_variables_fun):
+            if isinstance(mon_var, tuple):
+                aggregation_functions.append(mon_var[1])
+                monitored_variables.append(mon_var[0])
+            else:
+                aggregation_functions.append(default_agg)
+                monitored_variables.append(mon_var)
+
+        self.agg_fun = aggregation_functions
+
         Monitor.__init__(self, name_extension, freq, monitored_variables,
                          **kwargs)
 
@@ -273,7 +312,7 @@ class VarMonitor(Monitor):
         self.history = []
         self.iterations = []
 
-    def execute(self, batch_id):
+    def execute_virtual(self, batch_id):
         self.compute_current_values()
         strs = self.get_str()
         self.history.append(self.current_values)
@@ -285,7 +324,7 @@ class VarMonitor(Monitor):
 
     def compute_current_values(self):
         """Computes the current values of the monitored variables. Called by
-        the execute method.
+        the execute_virtual method.
         """
         pass
 
@@ -301,7 +340,7 @@ class VarMonitor(Monitor):
 
         # Compute the quantities from the tensor values
         var_values = []
-        for var in self.monitored_var:
+        for var, agg_scheme in zip(self.monitored_var, self.agg_fun):
             values = [tensor_values[i] for i in self.input_links[var]]
             if isinstance(var, theano.Variable):
                 res = values[0]
@@ -315,7 +354,7 @@ class VarMonitor(Monitor):
         self.current_spent_time += (time.clock() - begin)
 
     def get_str(self):
-        strs = ['timing: {:.3g} seconds'.format(self.current_spent_time)]
+        strs = []
         c = 0
         for var in self.monitored_var:
             if isinstance(var, MonitoredQuantity):
@@ -326,6 +365,15 @@ class VarMonitor(Monitor):
                 c += 1
 
         return strs
+
+    def find_var_from_name(self, str_name):
+        """
+        Returns the monitored variable given its name
+        """
+        for var in self.monitored_var:
+            if var.name == str_name:
+                return var
+        raise ValueError('No var found for name {}'.format(str_name))
 
 
 class ValMonitor(VarMonitor):
@@ -345,7 +393,8 @@ class ValMonitor(VarMonitor):
             self.inc_values(batch_input, target_input)
             c += 1
 
-        self.current_values /= c
+        for i, agg_fun in enumerate(self.agg_fun):
+            self.current_values[i] = agg_fun(self.current_values[i], c)
 
 
 class TrainMonitor(VarMonitor):
@@ -357,8 +406,14 @@ class TrainMonitor(VarMonitor):
         VarMonitor.__init__(self, 'Training', freq, inputs,
                             monitored_variables, updates, **kwargs)
 
+    def execute(self, batch_id):
+        """
+        """
+        return self.current_spent_time, self.execute_virtual(batch_id)
+
     def compute_current_values(self):
-        self.current_values /= self.freq
+        for i, agg_fun in enumerate(self.agg_fun):
+            self.current_values[i] = agg_fun(self.current_values[i], self.freq)
 
     def train(self, *inputs):
         self.inc_values(*inputs)
@@ -383,7 +438,7 @@ class LearningRateDecay(Extension, EndCondition):
         are interested in.
     idx: int, default=0
         if var computes several outputs, this index selects a single one.
-    learning_rate: theano shared variable or float
+    learning_rate: theano shared variable
         the variable storing the current learning rate
     patience: int, default=5
         the number of times we allow the variable to not improve before
@@ -396,16 +451,17 @@ class LearningRateDecay(Extension, EndCondition):
     min_value: float
         the minimal value that we tolerate for the learning rate. Below it, we
         stop training.
-    network: lasagne layer
-        if you want the best network to be saved.
+    params: list of shared variables (default None)
+        if you want the best parameters to be saved and restored. If you want
+        to include both the parameters of the network and those of the
+        optimisation algorithm (such as momentum), you may want to give
+        params=list(updates.keys()) as input.
     """
     def __init__(self, monitor, var, learning_rate, idx=0, patience=5,
-                 max_patience=7, decay_rate=2., min_value=1e-12, network=None):
+                 max_patience=7, decay_rate=2., min_value=1e-12, params=None):
         Extension.__init__(self, 'Learning rate', monitor.freq)
         EndCondition.__init__(self, 'Learning rate', monitor.freq)
         self.var = var
-        if not isinstance(learning_rate, theano.Variable):
-            learning_rate = theano.shared(learning_rate, 'learning_rate')
         self.lr = learning_rate
         self.patience = patience
         self.absolute_patience = max_patience
@@ -415,22 +471,22 @@ class LearningRateDecay(Extension, EndCondition):
         self.val_monitor = monitor
         self.min_value = min_value
 
-        self.network = network
-        self.best_params = None
+        self.params = params
+        self.best_params = params
 
         # Index of the variable to check in the monitoring extension
         self.var_idx = monitor.output_links[var][idx]
 
         self.best_value = np.inf
 
-    def execute(self, batch_id):
+    def execute_virtual(self, batch_id):
         current_value = self.val_monitor.history[-1][self.var_idx]
         if current_value < self.best_value:
             self.best_value = current_value
             self.waiting = 0
             self.absolute_waiting = 0
-            if self.network:
-                self.best_params = get_all_param_values(self.network)
+            if self.params:
+                self.best_params = [p.get_value() for p in self.params]
         else:
             self.waiting += 1
             self.absolute_waiting += 1
@@ -442,8 +498,9 @@ class LearningRateDecay(Extension, EndCondition):
             self.lr.set_value(self.lr.get_value()/self.decay_rate)
             self.waiting = 0
             msg = 'Learning rate decreased'
-            if self.network:
-                set_all_param_values(self.network, self.best_params)
+            if self.params:
+                for p, v in zip(self.params, self.best_params):
+                    p.set_value(v)
                 msg += '... best network re-loaded'
             strs.append(msg)
         return strs
@@ -455,12 +512,34 @@ class LearningRateDecay(Extension, EndCondition):
         elif self.lr.get_value() < self.min_value:
             res = 'Learning rate too small'
 
-        if res and self.network:
-            set_all_param_values(self.network, self.best_params)
+        if res and self.params:
+            for p, v in zip(self.params, self.best_params):
+                p.set_value(v)
             res += '... best network re-loaded'
 
         if res:
             res = [res]
+        return res
+
+
+class LearningRateDecay2(Extension, EndCondition):
+    def __init__(self, init_lr, end_lr, freq, n_batches):
+        Extension.__init__(self, 'Learning rate', freq)
+        EndCondition.__init__(self, 'Learning rate', freq)
+        self.n_batches = n_batches
+        self.lr = init_lr
+        self.decay_rate = np.float32((end_lr / init_lr.get_value()) ** (
+            float(freq) / n_batches))
+
+    def execute_virtual(self, batch_id):
+        self.lr.set_value(self.lr.get_value() * self.decay_rate)
+        strs = ['New learning rate: {}'.format(self.lr.get_value())]
+        return strs
+
+    def check_condition_virtual(self, batch_id):
+        res = False
+        if batch_id > self.n_batches:
+            res = ['Learning rate too small']
         return res
 
 
@@ -469,12 +548,14 @@ class Saver(Extension):
 
     Only the compute_object method should be overwritten.
     """
-    def __init__(self, name_extension, freq, folder_path, file_name):
-        super(Saver, self).__init__(name_extension, freq, apply_at_the_end=True)
+    def __init__(self, name_extension, freq, folder_path, file_name,
+                 apply_at_the_end=True):
+        super(Saver, self).__init__(name_extension, freq,
+                                    apply_at_the_end=apply_at_the_end)
         self.folder_path = folder_path
         self.file_name = file_name
 
-    def execute(self, batch_id):
+    def execute_virtual(self, batch_id):
         file_handle = open(os.path.join(
             self.folder_path, self.file_name + '.pkl'), 'wb')
         obj, msg = self.compute_object()
@@ -499,8 +580,56 @@ class NetworkSaver(Saver):
         self.net = net
 
     def compute_object(self):
-        return (self.net.get_param_values(),
+        return (get_all_param_values(self.net),
                 ['Network dumped into {}'.format(self.folder_path)])
+
+
+class BestNetworkSaver(Saver):
+    """Saves the parameters of the network.
+    """
+    def __init__(self, params, monitor, var, folder_path, idx=0,
+                 file_name='best_net', apply_at_the_end=True):
+        super(BestNetworkSaver, self).__init__('Best Network Saver',
+                                               monitor.freq, folder_path,
+                                               file_name, apply_at_the_end)
+        self.params = params
+        self.best_params_values = [p.get_value() for p in params]
+
+        self.val_monitor = monitor
+        # Index of the variable to check in the monitoring extension
+        self.var_idx = monitor.output_links[var][idx]
+
+        self.best_value = np.inf
+
+    def condition(self, batch_id):
+        if not self.val_monitor.history:
+            return False
+        current_value = self.val_monitor.history[-1][self.var_idx]
+        if current_value < self.best_value:
+            self.best_value = current_value
+            self.best_params_values = [p.get_value() for p in self.params]
+            return True
+        return False
+
+    def compute_object(self):
+        return (self.best_params_values,
+                ['Best Network dumped into {}'.format(self.folder_path)])
+
+    def restore(self, file_path=None):
+        if not file_path:
+            file_path = os.path.join(self.folder_path, self.file_name + '.pkl')
+        file_handle = open(file_path, 'r')
+        self.best_params_values = cPickle.load(file_handle)
+
+        for p, v in zip(self.params, self.best_params_values):
+            p.set_value(v)
+
+    def finish(self, batch_id):
+        b = time.clock()
+        for p, v in zip(self.params, self.best_params_values):
+            p.set_value(v)
+        e = time.clock()
+        return e-b, ['... best network re-loaded']
 
 
 class VariableSaver(Saver):
@@ -523,5 +652,8 @@ class VariableSaver(Saver):
     def compute_object(self):
         np_history = np.array(self.var_monitor.history)
         np_iterations = np.array(self.var_monitor.iterations)
-        return ((np_iterations, np_history, self.var_names),
+        d = {'iterations': np_iterations,
+             'history': np_history,
+             'names': self.var_names}
+        return (d,
                 ['Variable histories dumped into {}'.format(self.folder_path)])

@@ -35,7 +35,7 @@ class MostSimilarWords(Extension):
         idxs = heapq.nsmallest(self.knn, range(len(distances)), distances.take)
         return [self.inv_vocab[idx] for idx in idxs]
 
-    def execute(self, batch_id):
+    def execute_virtual(self, batch_id):
         npy_emb_matrix = self.embedding_matrix.get_value()
         strs = []
         for word, word_id in zip(self.words, self.word_ids):

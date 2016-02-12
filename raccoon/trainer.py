@@ -5,18 +5,16 @@ from utils import print_wrap
 
 
 class Trainer:
-    def __init__(self, train_monitor, extensions, end_conditions,
-                 run_before_training=False):
+    def __init__(self, train_monitor, extensions, end_conditions):
         self.train_monitor = train_monitor
         self.extensions = [train_monitor] + extensions
         self.end_conditions = end_conditions
-        self.run_before_training = run_before_training
         self.total_time = 0
 
     def print_extensions_logs(self, extensions_logs):
-        for ext, logs in extensions_logs:
+        for ext, (timing, logs) in extensions_logs:
             print print_wrap(
-                '{}:'.format(ext.name_extension), 1)
+                '{} [{:.3g} sec]:'.format(ext.name_extension, timing), 1)
             for line in logs:
                 print print_wrap(line, 2)
 
@@ -28,12 +26,10 @@ class Trainer:
                 print print_wrap(line, 2)
 
     def process_batch(self, epoch, iteration, *inputs):
-        self.train_monitor.train(*inputs)
-
         if iteration == 0:
-            self.total_time = time.clock()
-            if not self.run_before_training:
-                return False
+            return self.start()
+
+        self.train_monitor.train(*inputs)
 
         extensions_logs = [(ext, ext.execute(iteration))
                            for ext in self.extensions if ext.check(iteration)]
@@ -57,11 +53,22 @@ class Trainer:
             return True
         return False
 
+    def start(self):
+        self.total_time = time.clock()
+        print '\nTraining starts!'
+        print '    Computing potential initial extensions...',
+        extensions_logs = [(ext, ext.start())
+                           for ext in self.extensions if ext.apply_at_the_start]
+        print 'Done!'
+        if extensions_logs:
+            print 'Before training (extensions that run at the start):'
+        self.print_extensions_logs(extensions_logs)
+
     def finish(self, batch_id):
         self.total_time = time.clock() - self.total_time
         print 'Training finished after {} seconds'.format(self.total_time)
         print 'Computing extensions...',
-        extensions_logs = [(ext, ext.execute(batch_id))
+        extensions_logs = [(ext, ext.finish(batch_id))
                            for ext in self.extensions if ext.apply_at_the_end]
         print 'Done!'
         self.print_extensions_logs(extensions_logs)
