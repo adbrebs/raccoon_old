@@ -232,6 +232,7 @@ class VarMonitor(Monitor):
         aggregation functions allow to modify the way the scores are
         aggregated over minibatches. If not provided, the default function is
         lambda x, n_batches: x / float(n_batches)
+    output_tensors
     updates: list of theano updates, optional, default=None
         Updates fo be performed by the theano function.
     """
