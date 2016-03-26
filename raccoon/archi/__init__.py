@@ -157,11 +157,11 @@ class PositionAttentionLayer:
 
         h = self.layer.step(inputs, h_pre, mask=mask, process_inputs=True)
 
-        act = T.dot(h, self.w_cond) + self.b_cond
+        act = T.exp(T.dot(h, self.w_cond) + self.b_cond)
 
-        a = T.exp(act[:, :self.n_mixt])
-        b = T.exp(act[:, self.n_mixt:2*self.n_mixt])
-        k = k_pre + 0.1*T.exp(act[:, -self.n_mixt:])
+        a = act[:, :self.n_mixt]
+        b = act[:, self.n_mixt:2*self.n_mixt]
+        k = k_pre + 0.1*act[:, -self.n_mixt:]
 
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
         phi = T.sum(a * T.exp(-b * (k-u)**2), axis=-1)
