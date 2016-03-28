@@ -550,9 +550,9 @@ class Saver(Extension):
     Only the compute_object method should be overwritten.
     """
     def __init__(self, name_extension, freq, folder_path, file_name,
-                 apply_at_the_end=True):
+                 apply_at_the_end=True, **kwargs):
         super(Saver, self).__init__(name_extension, freq,
-                                    apply_at_the_end=apply_at_the_end)
+                                    apply_at_the_end=apply_at_the_end, **kwargs)
         self.folder_path = folder_path
         self.file_name = file_name
 
@@ -565,7 +565,7 @@ class Saver(Extension):
 
     def compute_object(self):
         """
-        It should return a tuple of to elements. The first is the object to be
+        It should return a tuple of two elements. The first is the object to be
         saved. The second element is a list of strings, each string
         representing a line to be printed when the extension is executed.
         """

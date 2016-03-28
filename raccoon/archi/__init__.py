@@ -18,7 +18,7 @@ def normal_mat(size):
 class GRULayer:
     """Classic GRU layer"""
 
-    def __init__(self, ls_n_in, n_out, ls_initializers, grad_clipping=100):
+    def __init__(self, ls_n_in, n_out, initializer, grad_clipping=100):
         """
         Parameters
         ----------
@@ -28,22 +28,16 @@ class GRULayer:
             input.
             If there is a single input, you can provide the single integer
             directly
-        ls_initializers: object with a sample(size) method
-            Corresponding initializers
+        initializer: object with a sample(size) method
+            Corresponding initializer of the weights
 
         grad_clipping: float
             Hard clip the gradients at each time step. Only the gradient values
             above this threshold are clipped by to the threshold. This is done
             during backprop.
         """
-        if len(ls_n_in) != len(ls_initializers):
-            raise ValueError('ls_n_in should have the same length as '
-                             'ls_initializers')
-
         if not isinstance(ls_n_in, (tuple, list)):
             ls_n_in = [ls_n_in]
-        if not isinstance(ls_initializers, (tuple, list)):
-            ls_initializers = [ls_initializers]
 
         self.ls_n_in = ls_n_in
         self.n_in = sum(ls_n_in)
@@ -53,14 +47,14 @@ class GRULayer:
         # This allows to have different initial scales for different parts of
         # the input. For example when the input of the gru layer is the
         # concatenation of heteregoneous inputs.
-        w_in_mat = create_uneven_weight(ls_n_in, 3 * n_out, ls_initializers)
+        w_in_mat = create_uneven_weight(ls_n_in, 3 * n_out, initializer)
 
         self.w_in = shared(w_in_mat, 'w_in_gru')
         self.b_in = shared(normal_mat((3*n_out,)), 'b_in_gru')
 
-        self.w_rec = shared(ls_initializers.sample((n_out, n_out)), 'w_rec_gru')
+        self.w_rec = shared(initializer.sample((n_out, n_out)), 'w_rec_gru')
 
-        self.w_gates = shared(ls_initializers.sample((n_out, 2 * n_out)),
+        self.w_gates = shared(initializer.sample((n_out, 2 * n_out)),
                               'w_gates_gru')
 
         self.params = [self.w_in, self.b_in, self.w_rec, self.w_gates]
