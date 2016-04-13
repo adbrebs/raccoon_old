@@ -144,46 +144,67 @@ class PositionAttentionLayer:
         self.params = layer_to_be_conditioned.params + \
                       [self.w_cond, self.b_cond]
 
-    def step(self, inputs, h_pre, w_pre, k_pre, seq_cond, seq_cond_mask,
+    def step(self, inputs, h_pre, k_pre, w_pre, seq_cond, seq_cond_mask,
              mask=None):
+        """
+        A single timestep.
 
+        Parameters
+        ----------
+        inputs: (batch_size, n_in)
+        h_pre: (batch_size, n_hidden)
+        mask: (batch_size,)
+
+        k_pre: (batch_size, n_mixt)
+        w_pre: (batch_size, n_in_cond)
+
+        seq_cond: (length_cond_sequence, batch_size, n_in_cond)
+        seq_cond_mask: (length_cond_sequence, batch_size)
+        """
+        # inputs: (batch_size, n_in + n_in_cond)
         inputs = T.concatenate([inputs, w_pre], axis=1)
 
+        # h: (batch_size, n_hidden)
         h = self.layer.step(inputs, h_pre, mask=mask, process_inputs=True)
 
+        # act: (batch_size, 3*n_mixt)
         act = T.exp(T.dot(h, self.w_cond) + self.b_cond)
 
         a = act[:, :self.n_mixt]
         b = act[:, self.n_mixt:2*self.n_mixt]
         k = k_pre + 0.1*act[:, -self.n_mixt:]
 
+        # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
+        # phi: (length_cond_sequence, batch_size, n_mixt)
         phi = T.sum(a * T.exp(-b * (k-u)**2), axis=-1)
+        # phi: (length_cond_sequence, batch_size)
         phi = phi * seq_cond_mask
 
+        # w: (batch_size, n_chars)
         w = T.sum(T.shape_padright(phi) * seq_cond, axis=0)
 
         if mask:
-            w = mask[:, None]*w + (1-mask[:, None])*w_pre
             k = mask[:, None]*k + (1-mask[:, None])*k_pre
+            w = mask[:, None]*w + (1-mask[:, None])*w_pre
 
         w = grad_clip(w, -100, 100)
 
-        return h, w, phi, k
+        return h, a, k, phi, w
 
     def apply(self, seq_inputs, seq_mask, seq_cond, seq_cond_mask,
-              h_ini, w_ini, k_ini):
+              h_ini, k_ini, w_ini):
 
-        def scan_step(inputs, mask, h_pre, w_pre, k_pre,
+        def scan_step(inputs, mask, h_pre, k_pre, w_pre,
                       seq_cond, seq_cond_mask):
-            return self.step(inputs, h_pre, w_pre, k_pre,
+            return self.step(inputs, h_pre, k_pre, w_pre,
                              seq_cond, seq_cond_mask, mask)
 
-        (seq_h, seq_w, _, seq_k), scan_updates = theano.scan(
+        (seq_h, _, seq_k, _, seq_w), scan_updates = theano.scan(
             fn=scan_step,
             sequences=[seq_inputs, seq_mask],
-            outputs_info=[h_ini, w_ini, None, k_ini],
+            outputs_info=[h_ini, None, k_ini, None, w_ini],
             non_sequences=[seq_cond, seq_cond_mask]
         )
 
-        return (seq_h, seq_w, seq_k), scan_updates
+        return (seq_h, seq_k, seq_w), scan_updates

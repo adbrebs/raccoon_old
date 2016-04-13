@@ -383,9 +383,9 @@ class ValMonitor(VarMonitor):
     external fuel stream.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
-                 stream, **kwargs):
+                 stream, updates=None, **kwargs):
         VarMonitor.__init__(self, name_extension, freq, inputs,
-                            monitored_variables, **kwargs)
+                            monitored_variables, updates, **kwargs)
         self.stream = stream
 
     def compute_current_values(self):
@@ -473,7 +473,7 @@ class LearningRateDecay(Extension, EndCondition):
         self.min_value = min_value
 
         self.params = params
-        self.best_params = params
+        self.best_params = [p.get_value() for p in self.params]
 
         # Index of the variable to check in the monitoring extension
         self.var_idx = monitor.output_links[var][idx]
@@ -482,6 +482,9 @@ class LearningRateDecay(Extension, EndCondition):
 
     def execute_virtual(self, batch_id):
         current_value = self.val_monitor.history[-1][self.var_idx]
+        if np.isnan(current_value):
+            raise Exception('nan detected')
+
         if current_value < self.best_value:
             self.best_value = current_value
             self.waiting = 0
@@ -495,6 +498,7 @@ class LearningRateDecay(Extension, EndCondition):
                 'best {}'.format(
             self.lr.get_value(), self.waiting, self.patience,
             self.absolute_waiting, self.absolute_patience, self.best_value)]
+
         if self.waiting > self.patience:
             self.lr.set_value(self.lr.get_value()/self.decay_rate)
             self.waiting = 0

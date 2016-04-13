@@ -56,6 +56,7 @@ class Trainer:
     def start(self):
         self.total_time = time.clock()
         print '\nTraining starts!'
+        sys.stdout.flush()
         print '    Computing potential initial extensions...',
         extensions_logs = [(ext, ext.start())
                            for ext in self.extensions if ext.apply_at_the_start]
