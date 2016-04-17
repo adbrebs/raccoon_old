@@ -101,7 +101,7 @@ class GRULayer:
 
         return h
 
-    def apply(self, seq_inputs, seq_mask, h_ini):
+    def apply(self, seq_inputs, seq_mask, h_ini, go_backwards=False):
         """
         Recurse over the whole sequences
 
@@ -121,90 +121,73 @@ class GRULayer:
         seq_h, scan_updates = theano.scan(
             fn=gru_step,
             sequences=[seq_inputs, seq_mask],
-            outputs_info=[h_ini])
+            outputs_info=[h_ini],
+            go_backwards=go_backwards)
 
         return seq_h, scan_updates
 
 
-class PositionAttentionLayer:
+class RnnCovarianceLayer:
     """
-    Positional attention mechanism as described by Alex Graves in
-    http://arxiv.org/abs/1308.0850
+    A layer that takes a recurrent layer as input and compute the covariance
+    matrix of its hidden states iteratively.
+    Computing the covariance matrix at the end of training would be more
+    expensive in memory.
+    Note that backpropagating through this layer will keep all the intermediate
+    covariance matrices and thus there is no memory gain.
     """
-    def __init__(self, layer_to_be_conditioned, n_in_cond, n_mixt, initializer):
-        self.n_in_cond = n_in_cond
-        self.n_mixt = n_mixt
+    def __init__(self, rnn_layer):
+        self.rnn_layer = rnn_layer
 
-        self.layer = layer_to_be_conditioned
-        n_out = self.n_out = self.layer.n_out
-
-        self.w_cond = shared(initializer.sample((n_out, 3*n_mixt)), 'w_cond')
-        self.b_cond = shared(normal_mat((3*n_mixt, )), 'b_cond')
-
-        self.params = layer_to_be_conditioned.params + \
-                      [self.w_cond, self.b_cond]
-
-    def step(self, inputs, h_pre, k_pre, w_pre, seq_cond, seq_cond_mask,
-             mask=None):
+    def step(self, inputs, h_pre, covariance_pre, mask=None,
+             process_inputs=False):
         """
-        A single timestep.
-
         Parameters
         ----------
-        inputs: (batch_size, n_in)
-        h_pre: (batch_size, n_hidden)
-        mask: (batch_size,)
-
-        k_pre: (batch_size, n_mixt)
-        w_pre: (batch_size, n_in_cond)
-
-        seq_cond: (length_cond_sequence, batch_size, n_in_cond)
-        seq_cond_mask: (length_cond_sequence, batch_size)
+        covariance_pre: (batch_size, n_hidden, n_hidden)
         """
-        # inputs: (batch_size, n_in + n_in_cond)
-        inputs = T.concatenate([inputs, w_pre], axis=1)
+        h = self.rnn_layer.step(inputs, h_pre, mask, process_inputs)
 
-        # h: (batch_size, n_hidden)
-        h = self.layer.step(inputs, h_pre, mask=mask, process_inputs=True)
+        inc_covariance = h.dimshuffle((0, 'x', 1)) * h.dimshuffle((0, 1, 'x'))
 
-        # act: (batch_size, 3*n_mixt)
-        act = T.exp(T.dot(h, self.w_cond) + self.b_cond)
+        return h, covariance_pre + inc_covariance
 
-        a = act[:, :self.n_mixt]
-        b = act[:, self.n_mixt:2*self.n_mixt]
-        k = k_pre + 0.1*act[:, -self.n_mixt:]
+    def apply(self, seq_inputs, seq_mask, h_ini):
+        """
+        Parameters
+        ----------
+        covariance_ini: (batch_size, n_hidden, n_hidden)
+        """
+        seq_inputs = self.rnn_layer.precompute_inputs(seq_inputs)
 
-        # u: (length_cond_sequence, 1, 1)
-        u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
-        # phi: (length_cond_sequence, batch_size, n_mixt)
-        phi = T.sum(a * T.exp(-b * (k-u)**2), axis=-1)
-        # phi: (length_cond_sequence, batch_size)
-        phi = phi * seq_cond_mask
+        def rnn_step(inputs, mask, h_pre, covariance_pre):
+            return self.step(inputs, h_pre, covariance_pre, mask,
+                             process_inputs=False)
 
-        # w: (batch_size, n_chars)
-        w = T.sum(T.shape_padright(phi) * seq_cond, axis=0)
-
-        if mask:
-            k = mask[:, None]*k + (1-mask[:, None])*k_pre
-            w = mask[:, None]*w + (1-mask[:, None])*w_pre
-
-        w = grad_clip(w, -100, 100)
-
-        return h, a, k, phi, w
-
-    def apply(self, seq_inputs, seq_mask, seq_cond, seq_cond_mask,
-              h_ini, k_ini, w_ini):
-
-        def scan_step(inputs, mask, h_pre, k_pre, w_pre,
-                      seq_cond, seq_cond_mask):
-            return self.step(inputs, h_pre, k_pre, w_pre,
-                             seq_cond, seq_cond_mask, mask)
-
-        (seq_h, _, seq_k, _, seq_w), scan_updates = theano.scan(
-            fn=scan_step,
+        covariance_ini = h_ini.dimshuffle((0, 'x', 1)) * h_ini.dimshuffle((0, 1, 'x'))
+        (seq_h, seq_covariance), scan_updates = theano.scan(
+            fn=rnn_step,
             sequences=[seq_inputs, seq_mask],
-            outputs_info=[h_ini, None, k_ini, None, w_ini],
-            non_sequences=[seq_cond, seq_cond_mask]
-        )
+            outputs_info=[h_ini, covariance_ini])
 
-        return (seq_h, seq_k, seq_w), scan_updates
+        return (seq_h, seq_covariance[-1]), scan_updates
+
+
+class BidirectionalRNN:
+    def __init__(self, rnn_forward, rnn_backward):
+        self.rnn_forward = rnn_forward
+        self.rnn_backward = rnn_backward
+
+        self.params = rnn_forward.params + rnn_backward.params
+
+    def apply(self, seq_inputs, seq_mask, h_ini_forward, h_ini_backward):
+        seq_forward, up_forward = self.rnn_forward.apply(
+            seq_inputs, seq_mask, h_ini_forward)
+        seq_backward, up_backward = self.rnn_backward.apply(
+            seq_inputs, seq_mask, h_ini_backward, go_backwards=True)
+
+        seq_forward *= seq_mask[:, :, None]
+        seq_backward *= seq_mask[::-1, :, None]
+
+        return (T.concatenate([seq_forward, seq_backward[::-1]], -1),
+                up_forward + up_backward)

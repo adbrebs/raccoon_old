@@ -390,8 +390,8 @@ class ValMonitor(VarMonitor):
 
     def compute_current_values(self):
         c = 0.0
-        for batch_input, target_input in self.stream():
-            self.inc_values(batch_input, target_input)
+        for data in self.stream():
+            self.inc_values(*data)
             c += 1
 
         for i, agg_fun in enumerate(self.agg_fun):
