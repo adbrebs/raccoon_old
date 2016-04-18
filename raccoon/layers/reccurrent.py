@@ -52,12 +52,10 @@ class GRULayer:
         self.w_in = shared(w_in_mat, 'w_in_gru')
         self.b_in = shared(normal_mat((3*n_out,)), 'b_in_gru')
 
-        self.w_rec = shared(initializer.sample((n_out, n_out)), 'w_rec_gru')
+        self.w_hid = shared(initializer.sample((n_out, 3 * n_out)),
+                            'w_hid_gru')
 
-        self.w_gates = shared(initializer.sample((n_out, 2 * n_out)),
-                              'w_gates_gru')
-
-        self.params = [self.w_in, self.b_in, self.w_rec, self.w_gates]
+        self.params = [self.w_in, self.b_in, self.w_hid]
 
     def precompute_inputs(self, inputs):
         return T.dot(inputs, self.w_in) + self.b_in
@@ -83,19 +81,19 @@ class GRULayer:
         if process_inputs:
             inputs = self.precompute_inputs(inputs)
 
-        x_in = inputs[:, :n_out]
-        x_gates = inputs[:, n_out:]
+        h_input = T.dot(h_pre, self.w_hid)
 
-        gates = T.nnet.sigmoid(x_gates + T.dot(h_pre, self.w_gates))
+        sig = T.nnet.sigmoid
+
+        gates = sig(inputs[:, :2*n_out] + h_input[:, :2*n_out])
         r_gate = gates[:, :n_out]
-        u_gate = gates[:, n_out:]
-
-        h_new = T.tanh(x_in + T.dot(r_gate * h_pre, self.w_rec))
+        u_gate = gates[:, n_out:2*n_out]
+        h_new = T.tanh(inputs[:, 2*n_out:] + r_gate * h_input[:, 2*n_out:])
 
         h = (1-u_gate)*h_pre + u_gate*h_new
 
         if mask:
-            h = mask[:, None]*h + (1-mask[:, None])*h_pre
+            h = T.switch(mask[:, None], h, h_pre)
 
         h = grad_clip(h, -self.grad_clipping, self.grad_clipping)
 
