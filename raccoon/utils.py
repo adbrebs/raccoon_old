@@ -1,7 +1,7 @@
 import textwrap
 
 
-def print_wrap(text, indent_level, width=80):
+def print_wrap(text, indent_level=0, width=80):
     """
     Wrap texts
     """

@@ -17,7 +17,7 @@ class Extension(object):
     If you inherit from Extension, the only methods you should implement are
     __init__ and execute_virtual.
 
-    It has to be registered to a :class:`Trainer` object.
+    It is provided to a :class:`Trainer` object.
 
     Parameters
     ----------
@@ -35,6 +35,7 @@ class Extension(object):
         self.freq = freq
         self.apply_at_the_end = apply_at_the_end
         self.apply_at_the_start = apply_at_the_start
+        self.total_spent_time_in_ext = 0
 
     def check(self, batch_id):
         """
@@ -62,9 +63,10 @@ class Extension(object):
             The lines to be printed during training. They will automatically be
             indented.
         """
-        ts = time.time()
+        ts = time.clock()
         result = self.execute_virtual(batch_id)
-        te = time.time()
+        te = time.clock()
+        self.total_spent_time_in_ext += te-ts
         return te-ts, result
 
     def execute_virtual(self, batch_id):
@@ -153,12 +155,6 @@ class Monitor(Extension):
     def __init__(self, name_extension, freq, monitored_var, **kwargs):
         Extension.__init__(self, name_extension, freq, **kwargs)
         self.monitored_var = monitored_var
-
-    def execute_virtual(self, batch_id):
-        raise NotImplementedError
-
-    def get_str(self):
-        raise NotImplementedError
 
 
 class ExternalVarMonitor(Monitor):
@@ -307,7 +303,6 @@ class VarMonitor(Monitor):
         # Containers to store the current values of the monitored variables and
         # the computational time.
         self.current_values = np.zeros(self.n_outputs, dtype=floatX)
-        self.current_spent_time = 0
 
         # Stores all the values of the monitored variables.
         self.history = []
@@ -320,7 +315,6 @@ class VarMonitor(Monitor):
         self.iterations.append(batch_id)
         # Reset current_values to zero for the next raccoon cycle
         self.current_values = np.zeros_like(self.current_values)
-        self.current_spent_time = 0
         return strs
 
     def compute_current_values(self):
@@ -333,8 +327,6 @@ class VarMonitor(Monitor):
         """Computes the values for the monitored variables for given inputs for
         a given batch.
         """
-        begin = time.clock()
-
         # List of values of the required tensors. We have to compute the
         # quantities from them.
         tensor_values = self.f(*inputs)
@@ -352,7 +344,6 @@ class VarMonitor(Monitor):
             var_values.extend(res)
 
         self.current_values += np.array(var_values)
-        self.current_spent_time += (time.clock() - begin)
 
     def get_str(self):
         strs = []
@@ -379,18 +370,21 @@ class VarMonitor(Monitor):
 
 class ValMonitor(VarMonitor):
     """
-    Extension to monitor tensor variables and MonitoredQuantity objects on an
-    external fuel stream.
+    Extension to monitor tensor variables and MonitoredQuantity objects a
+    dataset.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
-                 stream, updates=None, **kwargs):
-        VarMonitor.__init__(self, name_extension, freq, inputs,
-                            monitored_variables, updates, **kwargs)
-        self.stream = stream
+                 data_generator, updates=None, apply_at_the_end=True,
+                 apply_at_the_start=False, **kwargs):
+        VarMonitor.__init__(
+            self, name_extension, freq, inputs, monitored_variables, updates,
+            apply_at_the_end=apply_at_the_end,
+            apply_at_the_start=apply_at_the_start, **kwargs)
+        self.data_generator = data_generator
 
     def compute_current_values(self):
         c = 0.0
-        for data in self.stream():
+        for data in self.data_generator():
             self.inc_values(*data)
             c += 1
 
@@ -406,18 +400,29 @@ class TrainMonitor(VarMonitor):
     def __init__(self, freq, inputs, monitored_variables, updates, **kwargs):
         VarMonitor.__init__(self, 'Training', freq, inputs,
                             monitored_variables, updates, **kwargs)
+        self.time_since_last_execute = 0
 
     def execute(self, batch_id):
         """
         """
-        return self.current_spent_time, self.execute_virtual(batch_id)
+        begin = time.clock()
+        logs = self.execute_virtual(batch_id)
+        self.time_since_last_execute += (time.clock() - begin)
+
+        timing = self.time_since_last_execute
+        self.total_spent_time_in_ext += timing
+        self.time_since_last_execute = 0
+
+        return timing, logs
 
     def compute_current_values(self):
         for i, agg_fun in enumerate(self.agg_fun):
             self.current_values[i] = agg_fun(self.current_values[i], self.freq)
 
     def train(self, *inputs):
+        begin = time.clock()
         self.inc_values(*inputs)
+        self.time_since_last_execute += (time.clock() - begin)
 
 
 class LearningRateDecay(Extension, EndCondition):
@@ -640,11 +645,11 @@ class BestNetworkSaver(Saver):
 class VariableSaver(Saver):
     """Saves the history of a ValMonitor extension
     """
-    def __init__(self, var_monitor, freq, folder_path, file_name=None):
-        if not file_name:
-            file_name = var_monitor.name_extension
-        super(VariableSaver, self).__init__('Variables saver', freq,
-                                            folder_path, file_name)
+    def __init__(self, var_monitor, freq, folder_path, name=None):
+        if not name:
+            name = var_monitor.name_extension
+        super(VariableSaver, self).__init__('Variable saver ' + name, freq,
+                                            folder_path, 'var_saver_' + name)
         self.var_monitor = var_monitor
 
         self.var_names = []
@@ -661,4 +666,6 @@ class VariableSaver(Saver):
              'history': np_history,
              'names': self.var_names}
         return (d,
-                ['Variable histories dumped into {}'.format(self.folder_path)])
+                [self.name_extension +
+                 ' Variable histories dumped into {}'.format(
+                    self.folder_path)])
