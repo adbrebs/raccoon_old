@@ -38,9 +38,9 @@ class Trainer:
                 epoch_iterator = self.data_generator()
 
                 while True:
-                    t = time.clock()
+                    t = time.time()
                     inputs = next(epoch_iterator, None)
-                    self.data_processing_time += time.clock() - t
+                    self.data_processing_time += time.time() - t
                     if not inputs:
                         break
 
@@ -78,7 +78,7 @@ class Trainer:
             return False
 
         print 'Epoch {}, iteration {}, spent time {:.3f} secs:'.format(
-            self.epoch, self.iteration, time.clock()-self.begin_time)
+            self.epoch, self.iteration, time.time()-self.begin_time)
         self.print_extensions_logs(extensions_logs)
         self.print_end_conditions_logs(cond_logs)
         print '-'*79
@@ -89,7 +89,7 @@ class Trainer:
         return False
 
     def start(self):
-        self.begin_time = time.clock()
+        self.begin_time = time.time()
         print '\nTraining starts!'
         sys.stdout.flush()
         print print_wrap('Computing potential initial extensions...', 1),
@@ -102,7 +102,7 @@ class Trainer:
         self.print_extensions_logs(extensions_logs)
 
     def finish(self):
-        time_spent = time.clock() - self.begin_time
+        time_spent = time.time() - self.begin_time
         print 'Training finished after {} seconds'.format(time_spent)
         print 'Computing extensions...',
         extensions_logs = [(ext, ext.finish(self.iteration))
@@ -126,7 +126,7 @@ class Trainer:
             logs.append((1, ext.name_extension, ext.total_spent_time_in_ext))
             time_recorded += ext.total_spent_time_in_ext
 
-        total_time = time.clock() - self.begin_time
+        total_time = time.time() - self.begin_time
         logs.append((0, 'Overhead training loop',
                      self.total_time - time_recorded))
 

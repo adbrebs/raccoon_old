@@ -63,9 +63,9 @@ class Extension(object):
             The lines to be printed during training. They will automatically be
             indented.
         """
-        ts = time.clock()
+        ts = time.time()
         result = self.execute_virtual(batch_id)
-        te = time.clock()
+        te = time.time()
         self.total_spent_time_in_ext += te-ts
         return te-ts, result
 
@@ -134,10 +134,10 @@ class MaxTime(EndCondition):
     def __init__(self, freq, max_time=3600*48):
         EndCondition.__init__(self, 'Max Iteration', freq)
         self.max_time = max_time
-        self.begin_time = time.clock()
+        self.begin_time = time.time()
 
     def check_condition_virtual(self, batch_id):
-        if (time.clock() - self.begin_time) > self.max_time:
+        if (time.time() - self.begin_time) > self.max_time:
             return ['Time exceeded']
         return False
 
@@ -184,9 +184,9 @@ class ExternalVarMonitor(Monitor):
         # Compute the quantities from the tensor values
         quantities = []
         for i, quantity in enumerate(self.monitored_var):
-            begin = time.clock()
+            begin = time.time()
             res = quantity.calculate()
-            self.current_spent_time[i] = time.clock() - begin
+            self.current_spent_time[i] = time.time() - begin
             if not isinstance(res, list):
                 res = [res]
             quantities.extend(res)
@@ -405,9 +405,9 @@ class TrainMonitor(VarMonitor):
     def execute(self, batch_id):
         """
         """
-        begin = time.clock()
+        begin = time.time()
         logs = self.execute_virtual(batch_id)
-        self.time_since_last_execute += (time.clock() - begin)
+        self.time_since_last_execute += (time.time() - begin)
 
         timing = self.time_since_last_execute
         self.total_spent_time_in_ext += timing
@@ -420,9 +420,9 @@ class TrainMonitor(VarMonitor):
             self.current_values[i] = agg_fun(self.current_values[i], self.freq)
 
     def train(self, *inputs):
-        begin = time.clock()
+        begin = time.time()
         self.inc_values(*inputs)
-        self.time_since_last_execute += (time.clock() - begin)
+        self.time_since_last_execute += (time.time() - begin)
 
 
 class LearningRateDecay(Extension, EndCondition):
@@ -635,10 +635,10 @@ class BestNetworkSaver(Saver):
             p.set_value(v)
 
     def finish(self, batch_id):
-        b = time.clock()
+        b = time.time()
         for p, v in zip(self.params, self.best_params_values):
             p.set_value(v)
-        e = time.clock()
+        e = time.time()
         return e-b, ['... best network re-loaded']
 
 
