@@ -11,7 +11,7 @@ class Trainer:
         self.extensions = [train_monitor] + extensions
         self.end_conditions = end_conditions
         self.data_generator = data_generator
-        self.iteration = self.epoch = self.total_time = self.begin_time = 0
+        self.iteration = self.epoch = self.begin_time = 0
         self.data_processing_time = 0
 
     def print_extensions_logs(self, extensions_logs):
@@ -28,7 +28,7 @@ class Trainer:
             for line in logs:
                 print print_wrap(line, 2)
 
-    def train(self):
+    def train(self, custom_process_fun=None):
         if self.iteration == 0:
             self.start()
 
@@ -45,7 +45,11 @@ class Trainer:
                         break
 
                     self.iteration += 1
-                    res = self.process_batch(*inputs)
+
+                    if custom_process_fun:
+                        res = custom_process_fun(inputs)
+                    else:
+                        res = self.process_batch(*inputs)
 
                     if res:
                         self.finish()
@@ -73,7 +77,8 @@ class Trainer:
         if not any(extensions_logs) and not any(cond_logs):
             return False
 
-        print 'Epoch {}, iteration {}:'.format(self.epoch, self.iteration)
+        print 'Epoch {}, iteration {}, spent time {:.3f} secs:'.format(
+            self.epoch, self.iteration, time.clock()-self.begin_time)
         self.print_extensions_logs(extensions_logs)
         self.print_end_conditions_logs(cond_logs)
         print '-'*79
@@ -121,12 +126,11 @@ class Trainer:
             logs.append((1, ext.name_extension, ext.total_spent_time_in_ext))
             time_recorded += ext.total_spent_time_in_ext
 
-        self.total_time = time.clock() - self.begin_time
+        total_time = time.clock() - self.begin_time
         logs.append((0, 'Overhead training loop',
                      self.total_time - time_recorded))
 
-        print '\nProfiling: (Total time: {:.3f} secs)'.format(
-            self.total_time)
+        print '\nProfiling: (Total time: {:.3f} secs)'.format(total_time)
         for level, name, timing in logs:
             print print_wrap('[{:.3f} %] ({:.3f} secs) : {}'.format(
-                100.0 * timing / self.total_time, timing, name), 1 + level)
+                100.0 * timing / total_time, timing, name), 1 + level)
