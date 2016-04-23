@@ -127,8 +127,7 @@ class Trainer:
             time_recorded += ext.total_spent_time_in_ext
 
         total_time = time.time() - self.begin_time
-        logs.append((0, 'Overhead training loop',
-                     self.total_time - time_recorded))
+        logs.append((0, 'Overhead training loop', total_time - time_recorded))
 
         print '\nProfiling: (Total time: {:.3f} secs)'.format(total_time)
         for level, name, timing in logs:

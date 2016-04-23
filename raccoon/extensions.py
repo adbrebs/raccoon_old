@@ -118,8 +118,8 @@ class EndCondition(object):
 class MaxIteration(EndCondition):
     """Stops training when a maximal number of iterations is reached.
     """
-    def __init__(self, freq, max_batchs):
-        EndCondition.__init__(self, 'Max Iteration', freq)
+    def __init__(self, max_batchs):
+        EndCondition.__init__(self, 'Max Iteration', 1)
         self.max_batchs = max_batchs
 
     def check_condition_virtual(self, batch_id):
@@ -131,8 +131,8 @@ class MaxIteration(EndCondition):
 class MaxTime(EndCondition):
     """Stops training when a certain amount of training time is reached
     """
-    def __init__(self, freq, max_time=3600*48):
-        EndCondition.__init__(self, 'Max Iteration', freq)
+    def __init__(self, max_time=3600*48):
+        EndCondition.__init__(self, 'Max Iteration', 1)
         self.max_time = max_time
         self.begin_time = time.time()
 
