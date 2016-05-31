@@ -99,7 +99,7 @@ class GRULayer:
 
         return h
 
-    def apply(self, seq_inputs, seq_mask, h_ini, go_backwards=False):
+    def apply(self, seq_inputs, h_ini, seq_mask=None, go_backwards=False):
         """
         Recurse over the whole sequences
 
@@ -113,12 +113,22 @@ class GRULayer:
 
         seq_inputs = self.precompute_inputs(seq_inputs)
 
-        def gru_step(inputs, mask, h_pre):
-            return self.step(inputs, h_pre, mask, process_inputs=False)
+        def gru_step_no_mask(inputs, h_pre):
+            return self.step(inputs, h_pre, mask=None, process_inputs=False)
+
+        def gru_step_mask(inputs, mask, h_pre):
+            return self.step(inputs, h_pre, mask=mask, process_inputs=False)
+
+        if seq_mask:
+            gru_step = gru_step_mask
+            sequences = [seq_inputs, seq_mask]
+        else:
+            gru_step = gru_step_no_mask
+            sequences = [seq_inputs]
 
         seq_h, scan_updates = theano.scan(
             fn=gru_step,
-            sequences=[seq_inputs, seq_mask],
+            sequences=sequences,
             outputs_info=[h_ini],
             go_backwards=go_backwards)
 

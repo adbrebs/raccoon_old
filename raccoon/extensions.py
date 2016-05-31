@@ -233,7 +233,7 @@ class VarMonitor(Monitor):
         Updates fo be performed by the theano function.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables_fun,
-                 updates=None, **kwargs):
+                 updates=None, givens=None, **kwargs):
 
         # Divide monitored variables and corresponding aggregation schemes
         aggregation_functions = []
@@ -298,7 +298,8 @@ class VarMonitor(Monitor):
 
         # Function that will output the values of the required tensors for
         # given inputs.
-        self.f = theano.function(inputs, self.required_tensors, updates=updates)
+        self.f = theano.function(inputs, self.required_tensors,
+                                 updates=updates, givens=givens)
 
         # Containers to store the current values of the monitored variables and
         # the computational time.
@@ -374,15 +375,26 @@ class ValMonitor(VarMonitor):
     dataset.
     """
     def __init__(self, name_extension, freq, inputs, monitored_variables,
-                 data_generator, updates=None, apply_at_the_end=True,
-                 apply_at_the_start=False, **kwargs):
+                 data_generator, updates=None, givens=None,
+                 apply_at_the_end=True, apply_at_the_start=False,
+                 init_states=None, **kwargs):
         VarMonitor.__init__(
-            self, name_extension, freq, inputs, monitored_variables, updates,
+            self, name_extension, freq, inputs, monitored_variables,
+            updates=updates, givens=givens,
             apply_at_the_end=apply_at_the_end,
             apply_at_the_start=apply_at_the_start, **kwargs)
         self.data_generator = data_generator
+        self.init_states = init_states
 
     def compute_current_values(self):
+
+        # Save initial states to restore them later
+        if self.init_states:
+            init_values = []
+            for init_state in self.init_states:
+                init_values.append(init_state.get_value())
+                init_state.set_value(.0*init_state.get_value())
+
         c = 0.0
         for data in self.data_generator():
             self.inc_values(*data)
@@ -391,15 +403,22 @@ class ValMonitor(VarMonitor):
         for i, agg_fun in enumerate(self.agg_fun):
             self.current_values[i] = agg_fun(self.current_values[i], c)
 
+        # Restore initial states
+        if self.init_states:
+            for init_state, init_value in zip(self.init_states, init_values):
+                init_state.set_value(init_value)
+
 
 class TrainMonitor(VarMonitor):
     """
     Extension required by `class:Trainer` to process_batch updates and monitor
     tensor variables and MonitoredQuantity objects.
     """
-    def __init__(self, freq, inputs, monitored_variables, updates, **kwargs):
+    def __init__(self, freq, inputs, monitored_variables, updates, givens=None,
+                 **kwargs):
         VarMonitor.__init__(self, 'Training', freq, inputs,
-                            monitored_variables, updates, **kwargs)
+                            monitored_variables, updates, givens=givens,
+                            **kwargs)
         self.time_since_last_execute = 0
 
     def execute(self, batch_id):
