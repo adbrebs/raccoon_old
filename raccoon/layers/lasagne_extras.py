@@ -317,7 +317,7 @@ class GRULayer(MergeLayer):
 
 
 
-class SequenceSoftmax(MergeLayer):
+class SequenceNormalizingActivation(MergeLayer):
     """
     Computes a softmax over a sequence associated with a mask.
 
@@ -331,9 +331,34 @@ class SequenceSoftmax(MergeLayer):
     This layer has the same output shape as the parameter layer
     layer and layer_mask should have compatible shapes.
     """
-    def __init__(self, layer, layer_mask, seq_axis=1, name=None):
+    def __init__(self, layer, layer_mask, seq_axis=1, act='softmax',
+                 name=None):
         MergeLayer.__init__(self, [layer, layer_mask], name=name)
         self.seq_axis = seq_axis
+
+        if act == 'softmax':
+            act = lambda x: T.exp(x - T.max(x, axis=self.seq_axis, keepdims=True))
+        elif act == 'taylor_softmax':
+            act = lambda x: 1 + x + 0.5*x*x
+        elif act == 'taylor_softmax5':
+            def taylor_softmax(order=2):
+                def f(x):
+                    y = 1.
+                    fa = 1.
+                    for i in range(1, order + 1):
+                        fa *= i
+                        y += x ** i / fa
+                    return y
+
+                return f
+            act = taylor_softmax(5)
+
+            # def efficient_centered(x):
+            #     m = T.mean(x, axis=-1, keepdims=True)
+            #     return 1 + (x - m) * T.exp(m)
+            # act = efficient_centered
+
+        self.act = act
 
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0]
@@ -341,7 +366,7 @@ class SequenceSoftmax(MergeLayer):
     def get_output_for(self, inputs, **kwargs):
         att, mask = inputs
 
-        att = T.exp(att - T.max(att, axis=self.seq_axis, keepdims=True))
+        att = self.act(att)
         att = att * mask
         att /= T.sum(att, axis=self.seq_axis, keepdims=True)
 
@@ -357,21 +382,45 @@ class EfficientAttentionLayer(MergeLayer):
     attended_layer: layer of shape (batch_size, seq_length, n_features)
     attended_layer_mask: layer of shape (batch_size, seq_length, n_features)
     condition_layer: layer of shape (batch_size, n_features)
+
+    gate_covariance: string
+        - None: nothing
+        - 'scalar': single scalar is gating the whole vector
+        - 'vector': each individual components are gated
     """
-    def __init__(self, attended_layer, attended_layer_mask,
-                 condition_layer, gate_covariance=False, covariance_decay=None,
-                 name=None):
-        MergeLayer.__init__(self, [attended_layer, attended_layer_mask,
-                                   condition_layer], name=name)
+    def __init__(self, attended_layer, condition_layer,
+                 attended_layer_mask=None, covariance_init_state_layer=None,
+                 gate_covariance=None, covariance_decay=None, name=None):
+        input_layers = [attended_layer, condition_layer]
+        if attended_layer_mask:
+            self.masked = True
+            input_layers.append(attended_layer_mask)
+        else:
+            self.masked = False
+
+        if covariance_init_state_layer:
+            input_layers.append(covariance_init_state_layer)
+            self.init_state = True
+        else:
+            self.init_state = False
+
+        MergeLayer.__init__(self, input_layers, name=name)
         self.gate_covariance = gate_covariance
         self.covariance_decay = covariance_decay
-        if gate_covariance:
-            n_units = attended_layer.output_shape[-1]
+
+        n_units = attended_layer.output_shape[-1]
+        if gate_covariance == 'scalar':
             self.w_gate = self.add_param(init.Constant(0.0),
-                                         (n_units,), name="gate")
+                                         (n_units, 1), name="gate")
+            self.w_gate = T.addbroadcast(self.w_gate, 1)
             self.b_gate = self.add_param(init.Constant(1.0),
                                          (1,), name="gate")
             self.b_gate = T.addbroadcast(self.b_gate, 0)
+        elif gate_covariance == 'vector':
+            self.w_gate = self.add_param(init.Constant(0.0),
+                                         (n_units, n_units), name="gate")
+            self.b_gate = self.add_param(init.Constant(1.0),
+                                         (n_units,), name="gate")
 
     def get_output_shape_for(self, input_shapes):
         attended_layer_shape = input_shapes[0]
@@ -382,12 +431,16 @@ class EfficientAttentionLayer(MergeLayer):
         # seq_input: (batch_size, seq_size, n_hidden_con)
         # seq_mask: (batch_size, seq_size)
         # condition: (batch_size, n_hidden_con)
-        seq_input, seq_mask, condition = inputs
+        seq_input, condition = inputs[:2]
+        if self.masked:
+            seq_mask = inputs[2]
+
+        if self.init_state:
+            init_state = inputs[-1]
 
         if self.gate_covariance:
             update = T.nnet.sigmoid(
-                T.sum(seq_input * self.w_gate, axis=-1, keepdims=True) +
-                self.b_gate)
+                T.dot(seq_input, self.w_gate) + self.b_gate)
             seq_input *= update
 
         length_seq = seq_input.shape[1]
@@ -399,18 +452,27 @@ class EfficientAttentionLayer(MergeLayer):
             decay = decay.dimshuffle('x', 0, 'x')
             seq_input *= decay
 
-        seq_input *= T.shape_padright(seq_mask)
+            if self.init_state:
+                init_state *= self.covariance_decay ** length_seq
+
+        if self.masked:
+            seq_input *= T.shape_padright(seq_mask)
         # (batch_size, n_hidden_question, n_hidden_question)
         covariance = T.batched_dot(seq_input.dimshuffle(0, 2, 1), seq_input)
-        # (batch_size, n_hidden_question), equivalent to the following line:
-        # att = T.sum(covariance * condition.dimshuffle((0, 'x', 1)), axis=2)
-        att = 1000 * T.batched_dot(covariance, condition.dimshuffle((0, 1)))
+        if self.init_state:
+            covariance += init_state
+            init_state.default_update = covariance
+
+        # (batch_size, n_hidden_question)
+        att = 1000 * T.batched_dot(covariance, condition)
 
         if not self.covariance_decay:
-            att /= T.sum(seq_mask, axis=1, keepdims=True)
+            if self.masked:
+                att /= T.sum(seq_mask, axis=1, keepdims=True)
+            else:
+                att /= T.cast(seq_input.shape[1], floatX)
         # norm2_att = T.sum(att * condition, axis=1, keepdims=True)
         # att = 1000 * att / norm2_att
-
         return att
 
 
@@ -476,7 +538,7 @@ def apply_mask(layer_seq, layer_seq_mask):
 
 def create_deep_rnn(layer, layer_class, depth, layer_mask=None, residual=False,
                     skip_connections=False, bidir=False, dropout=None,
-                    init_state_layers=None, **kwargs):
+                    init_state_layers=None, name=None, **kwargs):
     """
     (Deep) RNN with possible skip/residual connections, bidirectional, dropout
     """
@@ -491,11 +553,11 @@ def create_deep_rnn(layer, layer_class, depth, layer_mask=None, residual=False,
             hid_init = init.Constant(0.)
 
         new_layer = layer_class(layer, hid_init=hid_init,
-                                mask_input=layer_mask, **kwargs)
+                                mask_input=layer_mask, name=name, **kwargs)
 
         if bidir:
             layer_bw = layer_class(layer, mask_input=layer_mask,
-                                   backwards=True, **kwargs)
+                                   backwards=True, name=name, **kwargs)
             new_layer = concat([new_layer, layer_bw], axis=2)
 
         if residual:
