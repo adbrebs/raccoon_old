@@ -519,7 +519,7 @@ class MultiEfficientAttentionDesign:
 
         cumsum_grad_seq_att = T.cumsum(grad_seq_att[::-1], axis=0)
 
-        def step(input, mask, cumsum_grad_att, grad_att, extra_grad_h, h, h_pre, update, grad_h, C,
+        def step(input, mask, cumsum_grad_att, extra_grad_h, h, h_pre, update, grad_h, C,
                  *prev_grad_params):
             """
             A single timestep of the backward pass.
@@ -560,15 +560,12 @@ class MultiEfficientAttentionDesign:
             grad_h_att *= 1000 / T.sum(seq_mask, axis=0)[:, None]
             grad_h_att = T.switch(mask[:, None], grad_h_att, .0)
 
-            # only relevant when the query is the state
-            grad_h_att_state = T.sum(C * h.dimshuffle(0, 1, 'x'), axis=-2)
-
             rec_grads = theano.clone(
                 output=[back_grad_input, back_grad_h_pre] + back_grad_params,
                 replace={back_input: input,
                          back_mask: mask,
                          back_h_pre: h_pre,
-                         back_grad_h: grad_h_att_state + extra_grad_h + grad_h + grad_h_att})
+                         back_grad_h: extra_grad_h + grad_h + grad_h_att})
 
             grad_input = rec_grads[0]
             grad_h_pre = rec_grads[1]
@@ -587,7 +584,7 @@ class MultiEfficientAttentionDesign:
         grads, _ = theano.scan(
             fn=step,
             sequences=[seq_inputs[::-1], seq_mask[::-1], cumsum_grad_seq_att,
-                       grad_seq_att[::-1], extra_grad_seq_h[::-1],
+                       extra_grad_seq_h[::-1],
                        dict(input=seq_h[::-1], taps=[0, 1]),
                        seq_updates[::-1]],
             outputs_info=([None, T.zeros_like(seq_h[0]), cov] +

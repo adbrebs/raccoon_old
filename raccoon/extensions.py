@@ -301,8 +301,7 @@ class VarMonitor(Monitor):
         self.f = theano.function(inputs, self.required_tensors,
                                  updates=updates, givens=givens)
 
-        # Containers to store the current values of the monitored variables and
-        # the computational time.
+        # Containers to store the current values of the monitored variables
         self.current_values = np.zeros(self.n_outputs, dtype=floatX)
 
         # Stores all the values of the monitored variables.

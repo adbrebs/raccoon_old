@@ -103,13 +103,16 @@ class Trainer:
         self.begin_time = time.time()
         print '\nTraining starts!'
         sys.stdout.flush()
-        print print_wrap('Computing potential initial extensions...', 1),
+
+        is_any = any(True for ext in self.extensions if ext.apply_at_the_start)
+        if not is_any:
+            return
+
+        print print_wrap('Computing initial extensions...', 1)
         extensions_logs = [(ext, ext.start())
                            for ext in self.extensions
                            if ext.apply_at_the_start]
-        print 'Done!'
-        if extensions_logs:
-            print 'Before training (extensions that run at the start):'
+        print 'Before training (extensions that run at the start):'
         self.print_extensions_logs(extensions_logs)
 
     def finish(self):
