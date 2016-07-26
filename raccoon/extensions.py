@@ -171,7 +171,6 @@ class ExternalVarMonitor(Monitor):
         Monitor.__init__(self, name_extension, freq, monitored_var, **kwargs)
 
         # Stores the current values of the monitored quantities
-        self.current_values = None
         self.current_spent_time = None
 
         # Stores all the values of the monitored quantities.
@@ -182,28 +181,28 @@ class ExternalVarMonitor(Monitor):
         self.current_spent_time = np.zeros(len(self.monitored_var))
 
         # Compute the quantities from the tensor values
-        quantities = []
+        metric_values = []
         for i, quantity in enumerate(self.monitored_var):
             begin = time.time()
             res = quantity.calculate()
             self.current_spent_time[i] = time.time() - begin
             if not isinstance(res, list):
                 res = [res]
-            quantities.extend(res)
+            metric_values.extend(res)
 
-        self.current_values = np.array(quantities)
+        metric_values = np.array(metric_values)
 
-        strs = self.get_str()
-        self.history.append(self.current_values)
+        strs = self.get_str(metric_values)
+        self.history.append(metric_values)
         self.iterations.append(batch_id)
         return strs
 
-    def get_str(self):
+    def get_str(self, metric_values):
         strs = []
         c = 0
         for timing, var in zip(self.current_spent_time, self.monitored_var):
             strs.append('Computed in {:.3g} seconds:'.format(timing))
-            var.write_str(strs, self.current_values[c:c+var.n_outputs], '  ')
+            var.write_str(strs, metric_values[c:c+var.n_outputs], '  ')
             c += var.n_outputs
 
         return strs
@@ -301,31 +300,26 @@ class VarMonitor(Monitor):
         self.f = theano.function(inputs, self.required_tensors,
                                  updates=updates, givens=givens)
 
-        # Containers to store the current values of the monitored variables
-        self.current_values = np.zeros(self.n_outputs, dtype=floatX)
-
         # Stores all the values of the monitored variables.
         self.history = []
         self.iterations = []
 
     def execute_virtual(self, batch_id):
-        self.compute_current_values()
-        strs = self.get_str()
-        self.history.append(self.current_values)
+        metric_values = self.compute_metrics()
+        strs = self.get_str(metric_values)
+        self.history.append(metric_values)
         self.iterations.append(batch_id)
-        # Reset current_values to zero for the next raccoon cycle
-        self.current_values = np.zeros_like(self.current_values)
         return strs
 
-    def compute_current_values(self):
-        """Computes the current values of the monitored variables. Called by
-        the execute_virtual method.
+    def compute_metrics(self):
+        """Computes and return the values of the monitored variables over the
+        whole data generator. Called by the execute_virtual method.
         """
-        pass
+        raise NotImplementedError
 
-    def inc_values(self, *inputs):
-        """Computes the values for the monitored variables for given inputs for
-        a given batch.
+    def compute_metrics_minibatch(self, *inputs):
+        """Computes and return the values of the monitored variables
+        for given inputs of a given minibatch.
         """
         # List of values of the required tensors. We have to compute the
         # quantities from them.
@@ -343,17 +337,17 @@ class VarMonitor(Monitor):
                 res = [res]
             var_values.extend(res)
 
-        self.current_values += np.array(var_values)
+        return np.array(var_values)
 
-    def get_str(self):
+    def get_str(self, metric_values):
         strs = []
         c = 0
         for var in self.monitored_var:
             if isinstance(var, MonitoredQuantity):
-                var.write_str(strs, self.current_values[c:c+var.n_outputs])
+                var.write_str(strs, metric_values[c:c+var.n_outputs])
                 c += var.n_outputs
             else:
-                strs.append(var.name + ': {}'.format(self.current_values[c]))
+                strs.append(var.name + ': {}'.format(metric_values[c]))
                 c += 1
 
         return strs
@@ -385,7 +379,7 @@ class ValMonitor(VarMonitor):
         self.data_generator = data_generator
         self.init_states = init_states
 
-    def compute_current_values(self):
+    def compute_metrics(self):
 
         # Save initial states to restore them later
         if self.init_states:
@@ -395,17 +389,20 @@ class ValMonitor(VarMonitor):
                 init_state.set_value(.0*init_state.get_value())
 
         c = 0.0
+        metric_values = np.zeros(self.n_outputs, dtype=floatX)
         for data in self.data_generator():
-            self.inc_values(*data)
+            metric_values += self.compute_metrics_minibatch(*data)
             c += 1
 
         for i, agg_fun in enumerate(self.agg_fun):
-            self.current_values[i] = agg_fun(self.current_values[i], c)
+            metric_values[i] = agg_fun(metric_values[i], c)
 
         # Restore initial states
         if self.init_states:
             for init_state, init_value in zip(self.init_states, init_values):
                 init_state.set_value(init_value)
+
+        return metric_values
 
 
 class TrainMonitor(VarMonitor):
@@ -420,6 +417,9 @@ class TrainMonitor(VarMonitor):
                             **kwargs)
         self.time_since_last_execute = 0
 
+        # Needs to keep track of the computed values during training
+        self.current_metric_values = np.zeros(self.n_outputs, dtype=floatX)
+
     def execute(self, batch_id):
         """
         """
@@ -433,13 +433,21 @@ class TrainMonitor(VarMonitor):
 
         return timing, logs
 
-    def compute_current_values(self):
+    def compute_metrics(self):
+
         for i, agg_fun in enumerate(self.agg_fun):
-            self.current_values[i] = agg_fun(self.current_values[i], self.freq)
+            self.current_metric_values[i] = agg_fun(
+                self.current_metric_values[i], self.freq)
+
+        # Reset current metric values for next pass
+        res = self.current_metric_values
+        self.current_metric_values = np.zeros(self.n_outputs, dtype=floatX)
+
+        return res
 
     def train(self, *inputs):
         begin = time.time()
-        self.inc_values(*inputs)
+        self.current_metric_values += self.compute_metrics_minibatch(*inputs)
         self.time_since_last_execute += (time.time() - begin)
 
 
