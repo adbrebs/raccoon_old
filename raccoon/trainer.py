@@ -113,7 +113,11 @@ class Trainer:
 
     def start(self):
         self.begin_time = time.time()
-        print '\nTraining starts!'
+        print
+        print '-' * 79
+        print '-' * 79
+        print 'Training starts!'
+        print '-' * 79
         sys.stdout.flush()
 
         is_any = any(True for ext in self.extensions if ext.apply_at_the_start)
@@ -129,6 +133,8 @@ class Trainer:
 
     def finish(self):
         time_spent = time.time() - self.begin_time
+        print '-' * 79
+        print '-' * 79
         print 'Training finished after {} seconds'.format(time_spent)
         print 'Computing extensions...'
         extensions_logs = [(ext, ext.finish(self.iteration))
