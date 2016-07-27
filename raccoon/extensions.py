@@ -53,14 +53,13 @@ class Extension(object):
         Boolean
             True if the execution can be existed. False otherwise.
         """
-        if end_epoch and self.freq == 'epoch':
-            return True
-
-        if not self.freq or self.freq == 'epoch':
+        if not self.freq:
             return False
 
-        if not batch_id % self.freq and self.condition(batch_id):
-            return True
+        if self.freq == 'epoch':
+            return end_epoch and self.condition(batch_id)
+
+        return batch_id % self.freq and self.condition(batch_id)
 
     def condition(self, batch_id):
         """The extension might only be run if certain conditions are met.
@@ -663,7 +662,7 @@ class BestNetworkSaver(Saver):
     def __init__(self, params, monitor, metric_name, folder_path,
                  restore_best_weights_at_the_end=True, idx=0,
                  file_name='best_net', apply_at_the_end=True,
-                 metric_mode='min'):
+                 metric_mode='min', dont_save_for_first_n_it=None):
         super(BestNetworkSaver, self).__init__('Best Network Saver',
                                                monitor.freq, folder_path,
                                                file_name, apply_at_the_end)
@@ -687,7 +686,15 @@ class BestNetworkSaver(Saver):
 
         self.best_value = self.m * np.inf
 
+        self.dont_save_for_first_n_it = dont_save_for_first_n_it
+        self.n_times_checked = 0
+
     def condition(self, batch_id):
+        self.n_times_checked += 1
+        if not self.dont_save_for_first_n_it or not (
+                    self.n_times_checked > self.dont_save_for_first_n_it):
+            return False
+
         if not self.validation_monitor.history:
             return False
         current_value = self.validation_monitor.history[-1][self.metric_idx]
