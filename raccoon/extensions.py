@@ -517,7 +517,6 @@ class LearningRateDecay(Extension, EndCondition):
                  metric_mode='min'):
         Extension.__init__(self, 'Learning rate', monitor.freq)
         EndCondition.__init__(self, 'Learning rate', monitor.freq)
-        self.metric = metric
         self.lr = learning_rate
         self.patience = patience
         self.absolute_patience = max_patience
@@ -530,9 +529,9 @@ class LearningRateDecay(Extension, EndCondition):
         self.params = params
         self.best_params = [p.get_value() for p in self.params]
 
-        metric = monitor.find_metric_from_name(metric_name)
+        self.metric = monitor.find_metric_from_name(metric_name)
         # Index of the metric to check in the monitoring extension
-        self.metric_idx = monitor.output_links[metric][idx]
+        self.metric_idx = monitor.output_links[self.metric][idx]
         self.mode_metric = metric_mode
         if metric_mode == 'max':
             self.m = -1
