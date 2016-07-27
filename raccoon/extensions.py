@@ -690,15 +690,20 @@ class BestNetworkSaver(Saver):
         self.n_times_checked = 0
 
     def condition(self, batch_id):
+        # Check if dont_save_for_first_n_it has passed
         self.n_times_checked += 1
-        if not self.dont_save_for_first_n_it or not (
-                    self.n_times_checked > self.dont_save_for_first_n_it):
+        if not self.dont_save_for_first_n_it or (
+                    self.n_times_checked < self.dont_save_for_first_n_it):
             return False
 
+        # Check if the validation monitor has indeed recorded values
         if not self.validation_monitor.history:
-            return False
+            raise Exception('Best network saver should be placed after the'
+                            'validation monitor in the list of extensions'
+                            'provided to the Trainer object.')
+
         current_value = self.validation_monitor.history[-1][self.metric_idx]
-        if self.m * current_value > self.m * self.best_value:
+        if self.m * current_value < self.m * self.best_value:
             self.best_value = current_value
             self.best_params_values = [p.get_value() for p in self.params]
             return True

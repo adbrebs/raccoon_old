@@ -130,10 +130,9 @@ class Trainer:
     def finish(self):
         time_spent = time.time() - self.begin_time
         print 'Training finished after {} seconds'.format(time_spent)
-        print 'Computing extensions...',
+        print 'Computing extensions...'
         extensions_logs = [(ext, ext.finish(self.iteration))
                            for ext in self.extensions if ext.apply_at_the_end]
-        print 'Done!'
         self.print_extensions_logs(extensions_logs)
 
         # Total extension time
