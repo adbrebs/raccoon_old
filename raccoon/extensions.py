@@ -25,8 +25,9 @@ class Extension(object):
     ----------
     name_extension: string
         The name of the extension
-    freq: int
-        The frequency with which the extension is called
+    freq: int or None
+        The frequency with which the extension is called. If None, it is never
+        called (or maybe at the beginning or the end of training).
     apply_at_the_start: bool, default False
         Apply the extension at the start of training
     apply_at_the_end: bool, default False
@@ -165,6 +166,16 @@ class Monitor(Extension):
     def __init__(self, name_extension, freq, metrics, **kwargs):
         Extension.__init__(self, name_extension, freq, **kwargs)
         self.metrics = metrics
+        self.metric_names = [m.name for m in metrics]
+
+    def find_metric_from_name(self, metric_name):
+        """
+        Returns the monitored metric given its name
+        """
+        for metric in self.metrics:
+            if metric.name == metric_name:
+                return metric
+        raise ValueError('No metric found for name {}'.format(metric_name))
 
 
 class ExternalMetricMonitor(Monitor):
@@ -361,15 +372,6 @@ class MetricMonitor(Monitor):
                 c += 1
 
         return strs
-
-    def find_metric_from_name(self, str_name):
-        """
-        Returns the monitored metric given its name
-        """
-        for metric in self.metrics:
-            if metric.name == str_name:
-                return metric
-        raise ValueError('No metric found for name {}'.format(str_name))
 
 
 class ValidationMonitor(MetricMonitor):
@@ -601,8 +603,13 @@ class Saver(Extension):
         self.file_name = file_name
 
     def execute_virtual(self, batch_id):
-        file_handle = open(os.path.join(
-            self.folder_path, self.file_name + '.pkl'), 'wb')
+        return self.save()
+
+    def save(self, file_path=None):
+        if not file_path:
+            file_path = os.path.join(self.folder_path, self.file_name + '.pkl')
+
+        file_handle = open(file_path, 'wb')
         obj, msg = self.compute_object()
         cPickle.dump(obj, file_handle)
         return msg
@@ -632,7 +639,8 @@ class NetworkSaver(Saver):
 class BestNetworkSaver(Saver):
     """Saves the parameters of the network.
     """
-    def __init__(self, params, monitor, metric, folder_path, idx=0,
+    def __init__(self, params, monitor, metric_name, folder_path,
+                 restore_best_weights_at_the_end=True, idx=0,
                  file_name='best_net', apply_at_the_end=True):
         super(BestNetworkSaver, self).__init__('Best Network Saver',
                                                monitor.freq, folder_path,
@@ -641,8 +649,12 @@ class BestNetworkSaver(Saver):
         self.best_params_values = [p.get_value() for p in params]
 
         self.validation_monitor = monitor
+
+        metric = monitor.find_metric_from_name(metric_name)
         # Index of the metric to check in the monitoring extension
         self.metric_idx = monitor.output_links[metric][idx]
+
+        self.restore_best_weights_at_the_end = restore_best_weights_at_the_end
 
         self.best_value = np.inf
 
@@ -670,6 +682,9 @@ class BestNetworkSaver(Saver):
             p.set_value(v)
 
     def finish(self, batch_id):
+        if not self.restore_best_weights_at_the_end:
+            return None, None
+
         b = time.time()
         for p, v in zip(self.params, self.best_params_values):
             p.set_value(v)

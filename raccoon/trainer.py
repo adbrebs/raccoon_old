@@ -24,6 +24,9 @@ class Trainer:
 
     def print_extensions_logs(self, extensions_logs):
         for ext, (timing, logs) in extensions_logs:
+            if not timing and not logs:
+                continue
+
             print print_wrap(
                 '{} [{:.3g} sec]:'.format(ext.name_extension, timing), 1)
             for line in logs:
@@ -40,12 +43,14 @@ class Trainer:
         if self.iteration == 0:
             self.start()
 
+        is_finished = False
+
         try:
-            while True:
+            while not is_finished:
                 self.epoch += 1
                 epoch_iterator = self.data_generator()
 
-                while True:
+                while not is_finished:
                     t = time.time()
                     inputs = next(epoch_iterator, None)
                     self.data_processing_time += time.time() - t
@@ -64,7 +69,7 @@ class Trainer:
 
                     if res:
                         self.finish()
-                        sys.exit()
+                        is_finished = True
         except KeyboardInterrupt:
             print 'Training interrupted by user.'
             self.finish()
