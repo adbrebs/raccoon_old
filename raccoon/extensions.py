@@ -512,8 +512,9 @@ class LearningRateDecay(Extension, EndCondition):
         optimisation algorithm (such as momentum), you may want to give
         params=list(updates.keys()) as input.
     """
-    def __init__(self, monitor, metric, learning_rate, idx=0, patience=5,
-                 max_patience=7, decay_rate=2., min_value=1e-12, params=None):
+    def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
+                 max_patience=7, decay_rate=2., min_value=1e-12, params=None,
+                 metric_mode='min'):
         Extension.__init__(self, 'Learning rate', monitor.freq)
         EndCondition.__init__(self, 'Learning rate', monitor.freq)
         self.metric = metric
@@ -529,17 +530,25 @@ class LearningRateDecay(Extension, EndCondition):
         self.params = params
         self.best_params = [p.get_value() for p in self.params]
 
+        metric = monitor.find_metric_from_name(metric_name)
         # Index of the metric to check in the monitoring extension
         self.metric_idx = monitor.output_links[metric][idx]
+        self.mode_metric = metric_mode
+        if metric_mode == 'max':
+            self.m = -1
+        elif metric_mode == 'min':
+            self.m = 1
+        else:
+            raise ValueError
 
-        self.best_value = np.inf
+        self.best_value = self.m * np.inf
 
     def execute_virtual(self, batch_id):
         current_value = self.validation_monitor.history[-1][self.metric_idx]
         if np.isnan(current_value):
             raise Exception('nan detected')
 
-        if current_value < self.best_value:
+        if current_value * self.m < self.best_value * self.m:
             self.best_value = current_value
             self.waiting = 0
             self.absolute_waiting = 0
@@ -548,6 +557,7 @@ class LearningRateDecay(Extension, EndCondition):
         else:
             self.waiting += 1
             self.absolute_waiting += 1
+
         strs = ['Learning rate: {}, waiting {}/{}, absolute waiting {}/{}, '
                 'best {}'.format(
             self.lr.get_value(), self.waiting, self.patience,
@@ -654,7 +664,7 @@ class BestNetworkSaver(Saver):
     def __init__(self, params, monitor, metric_name, folder_path,
                  restore_best_weights_at_the_end=True, idx=0,
                  file_name='best_net', apply_at_the_end=True,
-                 mode_metric='min'):
+                 metric_mode='min'):
         super(BestNetworkSaver, self).__init__('Best Network Saver',
                                                monitor.freq, folder_path,
                                                file_name, apply_at_the_end)
@@ -666,10 +676,10 @@ class BestNetworkSaver(Saver):
         metric = monitor.find_metric_from_name(metric_name)
         # Index of the metric to check in the monitoring extension
         self.metric_idx = monitor.output_links[metric][idx]
-        self.mode_metric = mode_metric
-        if mode_metric == 'max':
+        self.mode_metric = metric_mode
+        if metric_mode == 'max':
             self.m = -1
-        elif mode_metric == 'min':
+        elif metric_mode == 'min':
             self.m = 1
         else:
             raise ValueError
@@ -738,4 +748,4 @@ class MetricSaver(Saver):
         return (d,
                 [self.name_extension +
                  ' Metric histories dumped into {}'.format(
-                    self.folder_path)])
+                     self.folder_path)])
