@@ -653,7 +653,8 @@ class BestNetworkSaver(Saver):
     """
     def __init__(self, params, monitor, metric_name, folder_path,
                  restore_best_weights_at_the_end=True, idx=0,
-                 file_name='best_net', apply_at_the_end=True):
+                 file_name='best_net', apply_at_the_end=True,
+                 mode_metric='min'):
         super(BestNetworkSaver, self).__init__('Best Network Saver',
                                                monitor.freq, folder_path,
                                                file_name, apply_at_the_end)
@@ -665,16 +666,23 @@ class BestNetworkSaver(Saver):
         metric = monitor.find_metric_from_name(metric_name)
         # Index of the metric to check in the monitoring extension
         self.metric_idx = monitor.output_links[metric][idx]
+        self.mode_metric = mode_metric
+        if mode_metric == 'max':
+            self.m = -1
+        elif mode_metric == 'min':
+            self.m = 1
+        else:
+            raise ValueError
 
         self.restore_best_weights_at_the_end = restore_best_weights_at_the_end
 
-        self.best_value = np.inf
+        self.best_value = self.m * np.inf
 
     def condition(self, batch_id):
         if not self.validation_monitor.history:
             return False
         current_value = self.validation_monitor.history[-1][self.metric_idx]
-        if current_value < self.best_value:
+        if self.m * current_value > self.m * self.best_value:
             self.best_value = current_value
             self.best_params_values = [p.get_value() for p in self.params]
             return True
