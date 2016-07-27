@@ -59,10 +59,9 @@ class Trainer:
 
                     self.iteration += 1
 
-                    if self.custom_process_fun:
-                        res = self.custom_process_fun(inputs)
-                    else:
-                        res = self.process_batch(*inputs)
+                    self.train_minibatch(inputs)
+
+                    res = self.check_extensions_conditions()
 
                     if self.after_epoch_fun:
                         self.after_epoch_fun()
@@ -70,22 +69,30 @@ class Trainer:
                     if res:
                         self.finish()
                         is_finished = True
+
+                if not is_finished:
+                    self.check_extensions_conditions(end_epoch=True)
+
         except KeyboardInterrupt:
             print 'Training interrupted by user.'
             self.finish()
 
-    def process_batch(self, *inputs):
+    def train_minibatch(self, inputs):
+        if self.custom_process_fun:
+            self.custom_process_fun(inputs)
+        else:
+            self.train_monitor.train(*inputs)
+
+    def check_extensions_conditions(self, end_epoch=False):
         """
         Returns True if an ending condition triggers
         """
-        self.train_monitor.train(*inputs)
-
         extensions_logs = [(ext, ext.execute(self.iteration))
                            for ext in self.extensions
-                           if ext.check(self.iteration)]
+                           if ext.check(self.iteration, end_epoch)]
         cond_logs = []
         for cond in self.end_conditions:
-            logs = cond.check_condition(self.iteration)
+            logs = cond.check_condition(self.iteration, end_epoch)
             if logs:
                 cond_logs.append((cond, logs))
 

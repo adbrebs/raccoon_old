@@ -25,9 +25,10 @@ class Extension(object):
     ----------
     name_extension: string
         The name of the extension
-    freq: int or None
+    freq: int or 'epoch' or None
         The frequency with which the extension is called. If None, it is never
-        called (or maybe at the beginning or the end of training).
+        called (or maybe at the beginning or the end of training). If 'epoch',
+        it is called at the end of each epoch.
     apply_at_the_start: bool, default False
         Apply the extension at the start of training
     apply_at_the_end: bool, default False
@@ -42,7 +43,7 @@ class Extension(object):
         self.apply_at_the_start = apply_at_the_start
         self.total_spent_time_in_ext = 0
 
-    def check(self, batch_id):
+    def check(self, batch_id, end_epoch=False):
         """This method is called by the :class:`Trainer` object at every batch
         during training. It checks if the execution can be executed depending
         on its frequency and on its condition.
@@ -52,9 +53,14 @@ class Extension(object):
         Boolean
             True if the execution can be existed. False otherwise.
         """
-        if self.freq and not batch_id % self.freq and self.condition(batch_id):
+        if end_epoch and self.freq == 'epoch':
             return True
-        return False
+
+        if not self.freq or self.freq == 'epoch':
+            return False
+
+        if not batch_id % self.freq and self.condition(batch_id):
+            return True
 
     def condition(self, batch_id):
         """The extension might only be run if certain conditions are met.
@@ -104,15 +110,16 @@ class EndCondition(object):
     -----------
     name: string
         Name of the ending condition.
-    freq: int
+    freq: int or 'epoch'
         Frequency to which this ending condition should be checked.
     """
     def __init__(self, name, freq):
         self.name = name
         self.freq = freq
 
-    def check_condition(self, batch_id):
-        if not batch_id % self.freq:
+    def check_condition(self, batch_id, end_epoch=False):
+        if (end_epoch and self.freq == 'epoch') or \
+                (self.freq != 'epoch' and not batch_id % self.freq):
             return self.check_condition_virtual(batch_id)
         return False
 
@@ -431,6 +438,9 @@ class TrainMonitor(MetricMonitor):
 
         # Needs to keep track of the computed values during training
         self.current_metric_values = np.zeros(self.n_outputs, dtype=floatX)
+        # Needs also to keep track of the number of minibatches since last
+        # display
+        self.n_minibatches = 0
 
     def execute(self, batch_id):
 
@@ -448,17 +458,19 @@ class TrainMonitor(MetricMonitor):
 
         for i, agg_fun in enumerate(self.agg_fun):
             self.current_metric_values[i] = agg_fun(
-                self.current_metric_values[i], self.freq)
+                self.current_metric_values[i], self.n_minibatches)
 
         # Reset current metric values for next pass
         res = self.current_metric_values
         self.current_metric_values = np.zeros(self.n_outputs, dtype=floatX)
+        self.n_minibatches = 0
 
         return res
 
     def train(self, *inputs):
         begin = time.time()
         self.current_metric_values += self.compute_metrics_minibatch(*inputs)
+        self.n_minibatches += 1
         self.time_since_last_execute += (time.time() - begin)
 
 
