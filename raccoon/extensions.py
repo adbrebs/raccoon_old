@@ -325,7 +325,8 @@ class MetricMonitor(Monitor):
         # Function that will output the values of the required tensors for
         # given inputs.
         self.f = theano.function(inputs, self.required_tensors,
-                                 updates=updates, givens=givens)
+                                 updates=updates, givens=givens,
+                                 on_unused_input='warn')
 
         # Stores all the values of the monitored metrics.
         self.history = []
