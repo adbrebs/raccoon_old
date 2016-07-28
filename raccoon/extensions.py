@@ -93,8 +93,8 @@ class Extension(object):
     def start(self):
         return self.execute(0)
 
-    def finish(self, bath_id):
-        return self.execute(bath_id)
+    def finish(self, batch_id):
+        return self.execute(batch_id)
 
 
 class EndCondition(object):
@@ -727,6 +727,7 @@ class BestNetworkSaver(Saver):
             p.set_value(v)
 
     def finish(self, batch_id):
+        self.execute(batch_id)
         if not self.restore_best_weights_at_the_end:
             return None, None
 
