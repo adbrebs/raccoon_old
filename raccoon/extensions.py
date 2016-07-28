@@ -413,8 +413,9 @@ class ValidationMonitor(MetricMonitor):
         c = 0.0
         metric_values = np.zeros(self.n_outputs, dtype=floatX)
         for data in self.data_generator():
-            metric_values += self.compute_metrics_minibatch(*data)
-            c += 1
+            batch_size = data[0].shape[0]
+            metric_values += batch_size * self.compute_metrics_minibatch(*data)
+            c += batch_size
 
         for i, agg_fun in enumerate(self.agg_fun):
             metric_values[i] = agg_fun(metric_values[i], c)
