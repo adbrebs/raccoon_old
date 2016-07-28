@@ -172,7 +172,14 @@ class Monitor(Extension):
     def __init__(self, name_extension, freq, metrics, **kwargs):
         Extension.__init__(self, name_extension, freq, **kwargs)
         self.metrics = metrics
-        self.metric_names = [m.name for m in metrics]
+
+        self.metric_names = []
+        for metric in metrics:
+            if isinstance(metric, MonitoredQuantity):
+                self.metric_names.extend(metric.names)
+            else:
+                self.metric_names.append(metric.name)
+
         if None in self.metric_names:
             raise Exception('A metric provided does not have a name. Set it'
                             'with metric.name="zoulou"')
@@ -182,8 +189,13 @@ class Monitor(Extension):
         Returns the monitored metric given its name
         """
         for metric in self.metrics:
-            if metric.name == metric_name:
-                return metric
+            if isinstance(metric, MonitoredQuantity):
+                if metric_name in metric.names:
+                    return metric
+            else:
+                if metric.name == metric_name:
+                    return metric
+
         raise ValueError('No metric found for name {}'.format(metric_name))
 
 
@@ -750,19 +762,13 @@ class MetricSaver(Saver):
                                           folder_path, 'metric_saver_' + name)
         self.metric_monitor = metric_monitor
 
-        self.metric_names = []
-        for metric in self.metric_monitor.metrics:
-            if isinstance(metric, MonitoredQuantity):
-                self.metric_names.extend(metric.names)
-            else:
-                self.metric_names.append(metric.name)
 
     def compute_object(self):
         np_history = np.array(self.metric_monitor.history)
         np_iterations = np.array(self.metric_monitor.iterations)
         d = {'iterations': np_iterations,
              'history': np_history,
-             'names': self.metric_names}
+             'names': self.metric_monitor.metric_names}
         return (d,
                 [self.name_extension +
                  ' Metric histories dumped into {}'.format(
