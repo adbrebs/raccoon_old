@@ -173,6 +173,9 @@ class Monitor(Extension):
         Extension.__init__(self, name_extension, freq, **kwargs)
         self.metrics = metrics
         self.metric_names = [m.name for m in metrics]
+        if None in self.metric_names:
+            raise Exception('A metric provided does not have a name. Set it'
+                            'with metric.name="zoulou"')
 
     def find_metric_from_name(self, metric_name):
         """
