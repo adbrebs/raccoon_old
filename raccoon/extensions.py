@@ -43,7 +43,7 @@ class Extension(object):
         self.apply_at_the_start = apply_at_the_start
         self.total_spent_time_in_ext = 0
 
-    def check(self, batch_id, end_epoch=False):
+    def check(self, batch_id, epoch_id, end_epoch=False):
         """This method is called by the :class:`Trainer` object at every batch
         during training. It checks if the execution can be executed depending
         on its frequency and on its condition.
@@ -57,25 +57,25 @@ class Extension(object):
             return False
 
         if self.freq == 'epoch':
-            return end_epoch and self.condition(batch_id)
+            return end_epoch and self.condition(batch_id, epoch_id)
 
-        return batch_id % self.freq and self.condition(batch_id)
+        return batch_id % self.freq and self.condition(batch_id, epoch_id)
 
-    def condition(self, batch_id):
+    def condition(self, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
         """
         ts = time.time()
-        decision = self.condition_virtual(batch_id)
+        decision = self.condition_virtual(batch_id, epoch_id)
         te = time.time()
         self.total_spent_time_in_ext += te-ts
         return decision
 
-    def condition_virtual(self, batch_id):
+    def condition_virtual(self, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
         """
         return True
 
-    def execute(self, batch_id):
+    def execute(self, batch_id, epoch_id):
         """The method that is called when the extension is executed.
 
         Do not re-implement this method but execute_virtual instead.
@@ -89,21 +89,21 @@ class Extension(object):
             indented.
         """
         ts = time.time()
-        msg = self.execute_virtual(batch_id)
+        msg = self.execute_virtual(batch_id, epoch_id)
         te = time.time()
         self.total_spent_time_in_ext += te-ts
         return te-ts, msg
 
-    def execute_virtual(self, batch_id):
+    def execute_virtual(self, batch_id, epoch_id):
         """The method which should be re-implemented.
         """
         return ['Extension was executed']
 
     def start(self):
-        return self.execute(0)
+        return self.execute(0, 0)
 
-    def finish(self, batch_id):
-        return self.execute(batch_id)
+    def finish(self, batch_id, epoch_id):
+        return self.execute(batch_id, epoch_id)
 
 
 class EndCondition(object):
@@ -125,13 +125,13 @@ class EndCondition(object):
         self.name = name
         self.freq = freq
 
-    def check_condition(self, batch_id, end_epoch=False):
+    def check_condition(self, batch_id, epoch_id, end_epoch=False):
         if (end_epoch and self.freq == 'epoch') or \
                 (self.freq != 'epoch' and not batch_id % self.freq):
-            return self.check_condition_virtual(batch_id)
+            return self.check_condition_virtual(batch_id, epoch_id)
         return False
 
-    def check_condition_virtual(self, batch_id):
+    def check_condition_virtual(self, batch_id, epoch_id):
         """
         Method that checks if the ending condition is met.
         If it is met, it should return a list of strings, one string per line
@@ -144,13 +144,18 @@ class EndCondition(object):
 class MaxIteration(EndCondition):
     """Stops training when a maximal number of iterations is reached.
     """
-    def __init__(self, max_batchs):
+    def __init__(self, max_batchs=np.inf, max_epochs=np.inf):
         EndCondition.__init__(self, 'Max Iteration', 1)
         self.max_batchs = max_batchs
+        self.max_epochs = max_epochs
+        if not max_batchs and not max_epochs:
+            raise Exception('Either max_batchs or max_epochs should be set.')
 
-    def check_condition_virtual(self, batch_id):
+    def check_condition_virtual(self, batch_id, epoch_id):
         if batch_id > self.max_batchs:
             return ['Maximal number of batches reached']
+        if epoch_id > self.max_epochs:
+            return ['Maximal number of epochs reached']
         return False
 
 
@@ -162,7 +167,7 @@ class MaxTime(EndCondition):
         self.max_time = max_time
         self.begin_time = time.time()
 
-    def check_condition_virtual(self, batch_id):
+    def check_condition_virtual(self, batch_id, epoch_id):
         if (time.time() - self.begin_time) > self.max_time:
             return ['Time exceeded']
         return False
@@ -228,7 +233,7 @@ class ExternalMetricMonitor(Monitor):
         self.history = []
         self.iterations = []
 
-    def execute_virtual(self, batch_id):
+    def execute_virtual(self, batch_id, epoch_id):
         self.current_spent_time = np.zeros(len(self.metrics))
 
         # Compute the metrics from the tensor values
@@ -245,7 +250,7 @@ class ExternalMetricMonitor(Monitor):
 
         strs = self.get_str(metric_values)
         self.history.append(metric_values)
-        self.iterations.append(batch_id)
+        self.iterations.append(batch_id, epoch_id)
         return strs
 
     def get_str(self, metric_values):
@@ -356,7 +361,7 @@ class MetricMonitor(Monitor):
         self.history = []
         self.iterations = []
 
-    def execute_virtual(self, batch_id):
+    def execute_virtual(self, batch_id, epoch_id):
         metric_values = self.compute_metrics()
         strs = self.get_str(metric_values)
         self.history.append(metric_values)
@@ -467,10 +472,10 @@ class TrainMonitor(MetricMonitor):
         # display
         self.n_minibatches = 0
 
-    def execute(self, batch_id):
+    def execute(self, batch_id, epoch_id):
 
         begin = time.time()
-        logs = self.execute_virtual(batch_id)
+        logs = self.execute_virtual(batch_id, epoch_id)
         self.time_since_last_execute += (time.time() - begin)
 
         timing = self.time_since_last_execute
@@ -567,7 +572,7 @@ class LearningRateDecay(Extension, EndCondition):
 
         self.best_value = self.m * np.inf
 
-    def execute_virtual(self, batch_id):
+    def execute_virtual(self, batch_id, epoch_id):
         current_value = self.validation_monitor.history[-1][self.metric_idx]
         if np.isnan(current_value):
             raise Exception('nan detected')
@@ -598,7 +603,7 @@ class LearningRateDecay(Extension, EndCondition):
             strs.append(msg)
         return strs
 
-    def check_condition_virtual(self, batch_id):
+    def check_condition_virtual(self, batch_id, epoch_id):
         res = False
         if self.absolute_waiting > self.absolute_patience:
             res = 'Patience exceeded'
@@ -624,12 +629,12 @@ class LearningRateDecay2(Extension, EndCondition):
         self.decay_rate = np.float32((end_lr / init_lr.get_value()) ** (
             float(freq) / n_batches))
 
-    def execute_virtual(self, batch_id):
+    def execute_virtual(self, batch_id, epoch_id):
         self.lr.set_value(self.lr.get_value() * self.decay_rate)
         strs = ['New learning rate: {}'.format(self.lr.get_value())]
         return strs
 
-    def check_condition_virtual(self, batch_id):
+    def check_condition_virtual(self, batch_id, epoch_id):
         res = False
         if batch_id > self.n_batches:
             res = ['Learning rate too small']
@@ -648,7 +653,7 @@ class Saver(Extension):
         self.folder_path = folder_path
         self.file_name = file_name
 
-    def execute_virtual(self, batch_id):
+    def execute_virtual(self, batch_id, epoch_id):
         return self.save()
 
     def save(self, file_path=None):
@@ -715,7 +720,7 @@ class BestNetworkSaver(Saver):
         self.dont_dump_for_first_n_it = dont_save_for_first_n_it
         self.n_times_checked = 0
 
-    def condition_virtual(self, batch_id):
+    def condition_virtual(self, batch_id, epoch_id):
         # Check if dont_save_for_first_n_it has passed
         self.n_times_checked += 1
 
@@ -751,7 +756,7 @@ class BestNetworkSaver(Saver):
         for p, v in zip(self.params, self.best_params_values):
             p.set_value(v)
 
-    def finish(self, batch_id):
+    def finish(self, batch_id, epoch_id):
         if not self.restore_best_weights_at_the_end:
             return None, None
 
@@ -771,7 +776,6 @@ class MetricSaver(Saver):
         super(MetricSaver, self).__init__('Metric saver ' + name, freq,
                                           folder_path, 'metric_saver_' + name)
         self.metric_monitor = metric_monitor
-
 
     def compute_object(self):
         np_history = np.array(self.metric_monitor.history)

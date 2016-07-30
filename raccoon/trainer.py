@@ -5,6 +5,12 @@ from utils import print_wrap
 
 
 class Trainer:
+    """
+    batch: int
+        number of batches processed
+    epoch: int
+        number of epochs processed
+    """
     def __init__(self, train_monitor, data_generator, extensions=None,
                  end_conditions=None, custom_process_fun=None,
                  after_epoch_fun=None):
@@ -17,7 +23,7 @@ class Trainer:
         self.extensions = [train_monitor] + extensions
         self.end_conditions = end_conditions
         self.data_generator = data_generator
-        self.iteration = self.epoch = self.begin_time = 0
+        self.batch = self.epoch = self.begin_time = 0
         self.data_processing_time = 0
         self.custom_process_fun = custom_process_fun
         self.after_epoch_fun = after_epoch_fun
@@ -40,7 +46,7 @@ class Trainer:
                 print print_wrap(line, 2)
 
     def train(self):
-        if self.iteration == 0:
+        if self.batch == 0:
             self.start()
 
         is_finished = False
@@ -57,7 +63,7 @@ class Trainer:
                     if inputs is None:
                         break
 
-                    self.iteration += 1
+                    self.batch += 1
 
                     self.train_minibatch(inputs)
 
@@ -71,7 +77,10 @@ class Trainer:
                         is_finished = True
 
                 if not is_finished:
-                    self.check_extensions_conditions(end_epoch=True)
+                    res = self.check_extensions_conditions(end_epoch=True)
+                    if res:
+                        self.finish()
+                        is_finished = True
 
         except KeyboardInterrupt:
             print 'Training interrupted by user.'
@@ -87,12 +96,12 @@ class Trainer:
         """
         Returns True if an ending condition triggers
         """
-        extensions_logs = [(ext, ext.execute(self.iteration))
+        extensions_logs = [(ext, ext.execute(self.batch, self.epoch))
                            for ext in self.extensions
-                           if ext.check(self.iteration, end_epoch)]
+                           if ext.check(self.batch, self.epoch, end_epoch)]
         cond_logs = []
         for cond in self.end_conditions:
-            logs = cond.check_condition(self.iteration, end_epoch)
+            logs = cond.check_condition(self.batch, self.epoch, end_epoch)
             if logs:
                 cond_logs.append((cond, logs))
 
@@ -101,7 +110,7 @@ class Trainer:
             return False
 
         print 'Epoch {}, iteration {}, spent time {:.3f} secs:'.format(
-            self.epoch, self.iteration, time.time()-self.begin_time)
+            self.epoch, self.batch, time.time() - self.begin_time)
         self.print_extensions_logs(extensions_logs)
         self.print_end_conditions_logs(cond_logs)
         print '-'*79
@@ -137,7 +146,7 @@ class Trainer:
         print '-' * 79
         print 'Training finished after {} seconds'.format(time_spent)
         print 'Computing extensions...'
-        extensions_logs = [(ext, ext.finish(self.iteration))
+        extensions_logs = [(ext, ext.finish(self.batch, self.epoch))
                            for ext in self.extensions if ext.apply_at_the_end]
         self.print_extensions_logs(extensions_logs)
 
