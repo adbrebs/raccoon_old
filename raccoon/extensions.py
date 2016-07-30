@@ -64,6 +64,15 @@ class Extension(object):
     def condition(self, batch_id):
         """The extension might only be run if certain conditions are met.
         """
+        ts = time.time()
+        decision = self.condition_virtual(batch_id)
+        te = time.time()
+        self.total_spent_time_in_ext += te-ts
+        return decision
+
+    def condition_virtual(self, batch_id):
+        """The extension might only be run if certain conditions are met.
+        """
         return True
 
     def execute(self, batch_id):
@@ -80,10 +89,10 @@ class Extension(object):
             indented.
         """
         ts = time.time()
-        result = self.execute_virtual(batch_id)
+        msg = self.execute_virtual(batch_id)
         te = time.time()
         self.total_spent_time_in_ext += te-ts
-        return te-ts, result
+        return te-ts, msg
 
     def execute_virtual(self, batch_id):
         """The method which should be re-implemented.
@@ -703,15 +712,12 @@ class BestNetworkSaver(Saver):
 
         self.best_value = self.m * np.inf
 
-        self.dont_save_for_first_n_it = dont_save_for_first_n_it
+        self.dont_dump_for_first_n_it = dont_save_for_first_n_it
         self.n_times_checked = 0
 
-    def condition(self, batch_id):
+    def condition_virtual(self, batch_id):
         # Check if dont_save_for_first_n_it has passed
         self.n_times_checked += 1
-        if not self.dont_save_for_first_n_it or (
-                    self.n_times_checked < self.dont_save_for_first_n_it):
-            return False
 
         # Check if the validation monitor has indeed recorded values
         if not self.validation_monitor.history:
@@ -723,7 +729,13 @@ class BestNetworkSaver(Saver):
         if self.m * current_value < self.m * self.best_value:
             self.best_value = current_value
             self.best_params_values = [p.get_value() for p in self.params]
-            return True
+
+            # Check if dont_save_for_first_n_it has passed
+            if not self.dont_dump_for_first_n_it or (
+                        self.n_times_checked < self.dont_dump_for_first_n_it):
+                return False  # we don't dump
+            return True  # we dump
+
         return False
 
     def compute_object(self):
@@ -740,8 +752,6 @@ class BestNetworkSaver(Saver):
             p.set_value(v)
 
     def finish(self, batch_id):
-        self.dont_save_for_first_n_it = 0
-        self.execute(batch_id)
         if not self.restore_best_weights_at_the_end:
             return None, None
 
