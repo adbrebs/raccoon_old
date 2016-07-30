@@ -198,9 +198,11 @@ class Monitor(Extension):
             raise Exception('A metric provided does not have a name. Set it'
                             'with metric.name="zoulou"')
 
-    def find_metric_from_name(self, metric_name):
+    def find_metric_from_name(self, metric_name, return_mode='raise'):
         """
         Returns the monitored metric given its name
+
+        return_mode: string {'raise', 'None'}
         """
         for metric in self.metrics:
             if isinstance(metric, MonitoredQuantity):
@@ -210,7 +212,12 @@ class Monitor(Extension):
                 if metric.name == metric_name:
                     return metric
 
-        raise ValueError('No metric found for name {}'.format(metric_name))
+        if return_mode == 'raise':
+            raise ValueError('No metric found for name {}'.format(metric_name))
+        elif return_mode == 'None':
+            return None
+        else:
+            raise ValueError
 
 
 class ExternalMetricMonitor(Monitor):
@@ -787,3 +794,36 @@ class MetricSaver(Saver):
                 [self.name_extension +
                  ' Metric histories dumped into {}'.format(
                      self.folder_path)])
+
+
+class ResetParams(Extension):
+    def __init__(self, freq, params, monitor, metric_name, values_to_avoid,
+                 idx=0):
+        Extension.__init__(self, name_extension='ResetParams', freq=freq)
+        self.freq = freq
+        self.params = params
+        self.monitor = monitor
+        self.init_param_values = [p.get_value() for p in params]
+
+        if not isinstance(values_to_avoid, list):
+            values_to_avoid = [values_to_avoid]
+        self.values_to_avoid = values_to_avoid
+
+        self.metric = monitor.find_metric_from_name(metric_name)
+        # Index of the metric to check in the monitoring extension
+        self.metric_idx = monitor.output_links[self.metric][idx]
+
+    def condition_virtual(self, batch_id, epoch_id):
+        """The extension might only be run if certain conditions are met.
+        """
+        current_value = self.monitor.history[-1][self.metric_idx]
+        return current_value in self.values_to_avoid
+
+    def execute_virtual(self, batch_id, epoch_id):
+        param_values = [np.random.permutation(p.flat).reshape(p.shape)
+                        for p in self.init_param_values]
+
+        for p, p_np in zip(self.params, param_values):
+            p.set_value(p_np)
+
+        return ['Weights have been reset']
