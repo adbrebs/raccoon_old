@@ -59,7 +59,8 @@ class Extension(object):
         if self.freq == 'epoch':
             return end_epoch and self.condition(batch_id, epoch_id)
 
-        return batch_id % self.freq and self.condition(batch_id, epoch_id)
+        return ((not (batch_id % self.freq)) and
+                self.condition(batch_id, epoch_id))
 
     def condition(self, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
