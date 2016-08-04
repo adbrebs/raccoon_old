@@ -2,7 +2,7 @@ import heapq
 import theano.tensor as T
 
 
-class MonitoredQuantity:
+class MonitoredQuantity(object):
     """This abstract class allows to monitor quantities that are not theano
     tensors.
     If computed theano tensor values are required, they need to be indicated in
@@ -28,6 +28,18 @@ class MonitoredQuantity:
         if not required_tensors:
             required_tensors = []
         self.required_tensors = required_tensors
+
+    @property
+    def name(self):
+        if len(self.names) > 1:
+            raise ValueError('This monitored quantity has several variables')
+        return self.names[0]
+
+    @name.setter
+    def name(self, new_name):
+        if len(self.names) > 1:
+            raise ValueError('This monitored quantity has several variables')
+        self.names = [new_name]
 
     def calculate(self, *inputs):
         """Computes the outputs using, optionnally, values specified in

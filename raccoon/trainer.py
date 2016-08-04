@@ -1,7 +1,7 @@
 import sys
 import time
 
-from utils import print_wrap
+from utils import create_text_wrapper
 
 
 class Trainer:
@@ -13,11 +13,13 @@ class Trainer:
     """
     def __init__(self, train_monitor, data_generator, extensions=None,
                  end_conditions=None, custom_process_fun=None,
-                 after_epoch_fun=None):
+                 after_epoch_fun=None, print_wrap_width=80):
         if not extensions:
             extensions = []
         if not end_conditions:
             end_conditions = []
+
+        self.print_wrap = create_text_wrapper(print_wrap_width)
 
         self.train_monitor = train_monitor
         self.extensions = [train_monitor] + extensions
@@ -33,17 +35,17 @@ class Trainer:
             if not timing and not logs:
                 continue
 
-            print print_wrap(
+            print self.print_wrap(
                 '{} [{:.3g} sec]:'.format(ext.name_extension, timing), 1)
             for line in logs:
-                print print_wrap(line, 2)
+                print self.print_wrap(line, 2)
 
     def print_end_conditions_logs(self, cond_logs):
         for cond, logs in cond_logs:
-            print print_wrap(
+            print self.print_wrap(
                 '{}:'.format(cond.name), 1)
             for line in logs:
-                print print_wrap(line, 2)
+                print self.print_wrap(line, 2)
 
     def train(self):
         if self.batch == 0:
@@ -133,7 +135,7 @@ class Trainer:
         if not is_any:
             return
 
-        print print_wrap('Computing initial extensions...', 1)
+        print self.print_wrap('Computing initial extensions...', 1)
         extensions_logs = [(ext, ext.start())
                            for ext in self.extensions
                            if ext.apply_at_the_start]
@@ -171,5 +173,5 @@ class Trainer:
 
         print '\nProfiling: (Total time: {:.3f} secs)'.format(total_time)
         for level, name, timing in logs:
-            print print_wrap('[{:.3f} %] ({:.3f} secs) : {}'.format(
+            print self.print_wrap('[{:.3f} %] ({:.3f} secs) : {}'.format(
                 100.0 * timing / total_time, timing, name), 1 + level)

@@ -1,6 +1,14 @@
 import textwrap
 
 
+def create_text_wrapper(width=80):
+
+    def f(text, indent_level=0):
+        return print_wrap(text, indent_level, width)
+
+    return f
+
+
 def print_wrap(text, indent_level=0, width=80):
     """
     Wrap texts

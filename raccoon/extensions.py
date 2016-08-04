@@ -35,6 +35,7 @@ class Extension(object):
         Apply the extension at the end of training or when training is
         interrupted
     """
+
     def __init__(self, name_extension, freq,
                  apply_at_the_end=False, apply_at_the_start=False):
         self.name_extension = name_extension
@@ -68,7 +69,7 @@ class Extension(object):
         ts = time.time()
         decision = self.condition_virtual(batch_id, epoch_id)
         te = time.time()
-        self.total_spent_time_in_ext += te-ts
+        self.total_spent_time_in_ext += te - ts
         return decision
 
     def condition_virtual(self, batch_id, epoch_id):
@@ -92,8 +93,8 @@ class Extension(object):
         ts = time.time()
         msg = self.execute_virtual(batch_id, epoch_id)
         te = time.time()
-        self.total_spent_time_in_ext += te-ts
-        return te-ts, msg
+        self.total_spent_time_in_ext += te - ts
+        return te - ts, msg
 
     def execute_virtual(self, batch_id, epoch_id):
         """The method which should be re-implemented.
@@ -122,6 +123,7 @@ class EndCondition(object):
     freq: int or 'epoch'
         Frequency to which this ending condition should be checked.
     """
+
     def __init__(self, name, freq):
         self.name = name
         self.freq = freq
@@ -145,6 +147,7 @@ class EndCondition(object):
 class MaxIteration(EndCondition):
     """Stops training when a maximal number of iterations is reached.
     """
+
     def __init__(self, max_batchs=np.inf, max_epochs=np.inf):
         EndCondition.__init__(self, 'Max Iteration', 1)
         self.max_batchs = max_batchs
@@ -163,7 +166,8 @@ class MaxIteration(EndCondition):
 class MaxTime(EndCondition):
     """Stops training when a certain amount of training time is reached
     """
-    def __init__(self, max_time=3600*48):
+
+    def __init__(self, max_time=3600 * 48):
         EndCondition.__init__(self, 'Max Iteration', 1)
         self.max_time = max_time
         self.begin_time = time.time()
@@ -184,6 +188,7 @@ class Monitor(Extension):
     - metrics that depend on theano tensors computed on another dataset or a
         data generator: you should use :class:`ValidationMonitor`.
     """
+
     def __init__(self, name_extension, freq, metrics, **kwargs):
         Extension.__init__(self, name_extension, freq, **kwargs)
         self.metrics = metrics
@@ -231,6 +236,7 @@ class ExternalMetricMonitor(Monitor):
         the list of special metrics to be monitored. These metrics should not
         require any theano tensor values to be computed.
     """
+
     def __init__(self, name_extension, freq, metrics, **kwargs):
         Monitor.__init__(self, name_extension, freq, metrics, **kwargs)
 
@@ -266,7 +272,7 @@ class ExternalMetricMonitor(Monitor):
         c = 0
         for timing, metric in zip(self.current_spent_time, self.metrics):
             strs.append('Computed in {:.3g} seconds:'.format(timing))
-            metric.write_str(strs, metric_values[c:c+metric.n_outputs], '  ')
+            metric.write_str(strs, metric_values[c:c + metric.n_outputs], '  ')
             c += metric.n_outputs
 
         return strs
@@ -295,6 +301,7 @@ class MetricMonitor(Monitor):
     updates: list of theano updates, optional, default=None
         Updates fo be performed by the theano function.
     """
+
     def __init__(self, name_extension, freq, inputs, metrics_with_aggfun,
                  updates=None, givens=None, **kwargs):
 
@@ -325,7 +332,8 @@ class MetricMonitor(Monitor):
                 n = metric.n_outputs
             elif isinstance(metric, theano.Variable):
                 n = 1
-            self.output_links[metric] = range(self.n_outputs, self.n_outputs + n)
+            self.output_links[metric] = range(self.n_outputs,
+                                              self.n_outputs + n)
             self.n_outputs += n
 
         # Tensors that have to be computed.
@@ -341,7 +349,7 @@ class MetricMonitor(Monitor):
                 a_list.append(idx)
             except ValueError:
                 self.required_tensors.append(tensor)
-                a_list.append(len(self.required_tensors)-1)
+                a_list.append(len(self.required_tensors) - 1)
 
         # input_links is a dictionary {metric: list of indices}. Each element
         # contains the indices of the tensors from required_tensors required
@@ -409,7 +417,7 @@ class MetricMonitor(Monitor):
         c = 0
         for metric in self.metrics:
             if isinstance(metric, MonitoredQuantity):
-                metric.write_str(strs, metric_values[c:c+metric.n_outputs])
+                metric.write_str(strs, metric_values[c:c + metric.n_outputs])
                 c += metric.n_outputs
             else:
                 strs.append(metric.name + ': {}'.format(metric_values[c]))
@@ -423,6 +431,7 @@ class ValidationMonitor(MetricMonitor):
     Extension to monitor metrics computed on a dataset. These metrics can
     either be tensors or MonitoredQuantity objects.
     """
+
     def __init__(self, name_extension, freq, inputs, metrics,
                  data_generator, updates=None, givens=None,
                  apply_at_the_end=True, apply_at_the_start=False,
@@ -442,7 +451,7 @@ class ValidationMonitor(MetricMonitor):
             init_values = []
             for init_state in self.init_states:
                 init_values.append(init_state.get_value())
-                init_state.set_value(.0*init_state.get_value())
+                init_state.set_value(.0 * init_state.get_value())
 
         c = 0.0
         metric_values = np.zeros(self.n_outputs, dtype=floatX)
@@ -467,6 +476,7 @@ class TrainMonitor(MetricMonitor):
     Extension required by `class:Trainer` to process_batch updates and monitor
     metrics (either tensors or MonitoredQuantity objects).
     """
+
     def __init__(self, freq, inputs, metrics, updates, givens=None,
                  **kwargs):
         MetricMonitor.__init__(self, 'Training', freq, inputs, metrics,
@@ -481,7 +491,6 @@ class TrainMonitor(MetricMonitor):
         self.n_minibatches = 0
 
     def execute(self, batch_id, epoch_id):
-
         begin = time.time()
         logs = self.execute_virtual(batch_id, epoch_id)
         self.time_since_last_execute += (time.time() - begin)
@@ -493,7 +502,6 @@ class TrainMonitor(MetricMonitor):
         return timing, logs
 
     def compute_metrics(self):
-
         for i, agg_fun in enumerate(self.agg_fun):
             self.current_metric_values[i] = agg_fun(
                 self.current_metric_values[i], self.n_minibatches)
@@ -550,6 +558,7 @@ class LearningRateDecay(Extension, EndCondition):
         optimisation algorithm (such as momentum), you may want to give
         params=list(updates.keys()) as input.
     """
+
     def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
                  max_patience=7, decay_rate=2., min_value=1e-12, params=None,
                  metric_mode='min'):
@@ -567,6 +576,7 @@ class LearningRateDecay(Extension, EndCondition):
         self.params = params
         self.best_params = [p.get_value() for p in self.params]
 
+        self.metric_name = metric_name
         self.metric = monitor.find_metric_from_name(metric_name)
         # Index of the metric to check in the monitoring extension
         self.metric_idx = monitor.output_links[self.metric][idx]
@@ -596,12 +606,13 @@ class LearningRateDecay(Extension, EndCondition):
             self.absolute_waiting += 1
 
         strs = ['Learning rate: {}, waiting {}/{}, absolute waiting {}/{}, '
-                'best {}'.format(
+                'best {} = {}'.format(
             self.lr.get_value(), self.waiting, self.patience,
-            self.absolute_waiting, self.absolute_patience, self.best_value)]
+            self.absolute_waiting, self.absolute_patience, self.metric_name,
+            self.best_value)]
 
         if self.waiting > self.patience:
-            self.lr.set_value(self.lr.get_value()/self.decay_rate)
+            self.lr.set_value(self.lr.get_value() / self.decay_rate)
             self.waiting = 0
             msg = 'Learning rate decreased'
             if self.params:
@@ -654,10 +665,12 @@ class Saver(Extension):
 
     Only the compute_object method should be overwritten.
     """
+
     def __init__(self, name_extension, freq, folder_path, file_name,
                  apply_at_the_end=True, **kwargs):
         super(Saver, self).__init__(name_extension, freq,
-                                    apply_at_the_end=apply_at_the_end, **kwargs)
+                                    apply_at_the_end=apply_at_the_end,
+                                    **kwargs)
         self.folder_path = folder_path
         self.file_name = file_name
 
@@ -685,6 +698,7 @@ class Saver(Extension):
 class NetworkSaver(Saver):
     """Saves the parameters of the network.
     """
+
     def __init__(self, net, freq, folder_path, file_name='net.pkl'):
         super(NetworkSaver, self).__init__('Network Saver', freq,
                                            folder_path, file_name)
@@ -698,6 +712,7 @@ class NetworkSaver(Saver):
 class BestNetworkSaver(Saver):
     """Saves the parameters of the network.
     """
+
     def __init__(self, params, monitor, metric_name, folder_path,
                  restore_best_weights_at_the_end=True, idx=0,
                  file_name='best_net', apply_at_the_end=True,
@@ -765,6 +780,10 @@ class BestNetworkSaver(Saver):
             p.set_value(v)
 
     def finish(self, batch_id, epoch_id):
+        if self.n_times_checked < self.dont_dump_for_first_n_it:
+            self.dont_dump_for_first_n_it = 0.1
+            self.execute(batch_id, epoch_id)
+
         if not self.restore_best_weights_at_the_end:
             return None, None
 
@@ -772,12 +791,13 @@ class BestNetworkSaver(Saver):
         for p, v in zip(self.params, self.best_params_values):
             p.set_value(v)
         e = time.time()
-        return e-b, ['... best network re-loaded']
+        return e - b, ['... best network re-loaded']
 
 
 class MetricSaver(Saver):
     """Saves the history of a ValidationMonitor extension
     """
+
     def __init__(self, metric_monitor, freq, folder_path, name=None):
         if not name:
             name = metric_monitor.name_extension
