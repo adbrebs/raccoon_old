@@ -716,10 +716,13 @@ class BestNetworkSaver(Saver):
     def __init__(self, params, monitor, metric_name, folder_path,
                  restore_best_weights_at_the_end=True, idx=0,
                  file_name='best_net', apply_at_the_end=True,
-                 metric_mode='min', dont_save_for_first_n_it=None):
+                 metric_mode='min', dont_save_for_first_n_it=None,
+                 save_on_disk=True):
         super(BestNetworkSaver, self).__init__('Best Network Saver',
                                                monitor.freq, folder_path,
                                                file_name, apply_at_the_end)
+
+        self.save_on_disk = save_on_disk
         self.params = params
         self.best_params_values = [p.get_value() for p in params]
 
@@ -757,12 +760,13 @@ class BestNetworkSaver(Saver):
         if self.m * current_value < self.m * self.best_value:
             self.best_value = current_value
             self.best_params_values = [p.get_value() for p in self.params]
-
             # Check if dont_save_for_first_n_it has passed
-            if not self.dont_dump_for_first_n_it or (
-                        self.n_times_checked < self.dont_dump_for_first_n_it):
+            if self.n_times_checked < self.dont_dump_for_first_n_it:
                 return False  # we don't dump
-            return True  # we dump
+            return True and self.save_on_disk  # we dump
+
+        elif self.dont_dump_for_first_n_it == self.n_times_checked:
+            return True and self.save_on_disk
 
         return False
 
@@ -780,18 +784,23 @@ class BestNetworkSaver(Saver):
             p.set_value(v)
 
     def finish(self, batch_id, epoch_id):
+        b = time.time()
+        msg = []
+
+        # The network has not yet been saved on the disk
         if self.n_times_checked < self.dont_dump_for_first_n_it:
             self.dont_dump_for_first_n_it = 0.1
-            self.execute(batch_id, epoch_id)
+            self.save()
+            msg.append('Best Network dumped into {}'.format(self.folder_path))
 
-        if not self.restore_best_weights_at_the_end:
-            return None, None
+        if self.restore_best_weights_at_the_end:
+            msg.append('... best network re-loaded')
+            for p, v in zip(self.params, self.best_params_values):
+                p.set_value(v)
 
-        b = time.time()
-        for p, v in zip(self.params, self.best_params_values):
-            p.set_value(v)
         e = time.time()
-        return e - b, ['... best network re-loaded']
+
+        return e - b, msg
 
 
 class MetricSaver(Saver):

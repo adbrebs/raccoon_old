@@ -32,7 +32,7 @@ class Trainer:
 
     def print_extensions_logs(self, extensions_logs):
         for ext, (timing, logs) in extensions_logs:
-            if not timing and not logs:
+            if not logs:
                 continue
 
             print self.print_wrap(
@@ -141,6 +141,7 @@ class Trainer:
                            if ext.apply_at_the_start]
         print 'Before training (extensions that run at the start):'
         self.print_extensions_logs(extensions_logs)
+        print '-' * 79
 
     def finish(self):
         time_spent = time.time() - self.begin_time
