@@ -178,6 +178,46 @@ class MaxTime(EndCondition):
         return False
 
 
+class NoTraining(EndCondition):
+    """Stops training when a maximal number of iterations is reached.
+    """
+
+    def __init__(self, monitor, metric_name, idx=0, patience=5):
+        EndCondition.__init__(self, 'No training', monitor.freq)
+
+        self.monitor = monitor
+        self.patience = patience
+        self.metric_name = metric_name
+        self.metric = monitor.find_metric_from_name(metric_name)
+        # Index of the metric to check in the monitoring extension
+        self.metric_idx = monitor.output_links[self.metric][idx]
+
+        self.counter = 0
+        self.initial_value = None
+
+    def check_condition_virtual(self, batch_id, epoch_id):
+
+        # Check if the validation monitor has indeed recorded values
+        if not self.monitor.history:
+            raise Exception('The no training extension should be placed after '
+                            'the validation monitor in the list of extensions'
+                            'provided to the Trainer object.')
+
+        current_value = self.monitor.history[-1][self.metric_idx]
+
+        if not self.initial_value:
+            self.initial_value = current_value
+            return False
+
+        if self.initial_value == current_value:
+            self.counter += 1
+
+        if self.counter > self.patience:
+            return ['Training has not started.']
+
+        return False
+
+
 class Monitor(Extension):
     """
     Base class for monitoring different metrics, which can be:
