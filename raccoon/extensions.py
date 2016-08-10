@@ -897,3 +897,122 @@ class ResetParams(Extension):
             p.set_value(p_np)
 
         return ['Weights have been reset']
+
+
+# class SharedVariableSchedule(Extension, EndCondition):
+#     """
+#     Both extension and ending condition that decreases the learning rate if
+#     there is no improvement on a metric monitored by a monitoring extension.
+#     If does not improve for absolute_patience, then the training stops.
+#
+#     The frequence of this extension is the same as the :class:`Monitor` monitor
+#     parameter.
+#
+#     Parameters:
+#     -----------
+#     monitor: :class:`Monitor` object
+#         :class:`Monitor` object which computes the metrics you are
+#         interested in.
+#     metric: MonitoredQuantity or tensor
+#         the metric (either MonitoredQuantity object or tensor) that
+#         you are interested in.
+#     idx: int, default=0
+#         if metric computes several outputs, this index selects a single one.
+#     learning_rate: theano shared variable
+#         the variable storing the current learning rate
+#     patience: int, default=5
+#         the number of times we allow the metric to not improve before
+#         decreasing the learning rate
+#     max_patience: int, default=7
+#         the number of times we allow the metric to not improve before we
+#         stop the training.
+#     decay_rate: float, default=2.0
+#         the rate at which the learning rate is decreased
+#     min_value: float
+#         the minimal value that we tolerate for the learning rate. Below it, we
+#         stop training.
+#     params: list of shared variables (default None)
+#         if you want the best parameters to be saved and restored. If you want
+#         to include both the parameters of the network and those of the
+#         optimisation algorithm (such as momentum), you may want to give
+#         params=list(updates.keys()) as input.
+#     """
+#
+#     def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
+#                  max_patience=7, decay_rate=2., min_value=1e-12, params=None,
+#                  metric_mode='min'):
+#         Extension.__init__(self, 'Learning rate', monitor.freq)
+#         EndCondition.__init__(self, 'Learning rate', monitor.freq)
+#         self.lr = learning_rate
+#         self.patience = patience
+#         self.absolute_patience = max_patience
+#         self.decay_rate = decay_rate
+#         self.waiting = 0
+#         self.absolute_waiting = 0
+#         self.validation_monitor = monitor
+#         self.min_value = min_value
+#
+#         self.params = params
+#         self.best_params = [p.get_value() for p in self.params]
+#
+#         self.metric_name = metric_name
+#         self.metric = monitor.find_metric_from_name(metric_name)
+#         # Index of the metric to check in the monitoring extension
+#         self.metric_idx = monitor.output_links[self.metric][idx]
+#         self.mode_metric = metric_mode
+#         if metric_mode == 'max':
+#             self.m = -1
+#         elif metric_mode == 'min':
+#             self.m = 1
+#         else:
+#             raise ValueError
+#
+#         self.best_value = self.m * np.inf
+#
+#     def execute_virtual(self, batch_id, epoch_id):
+#         current_value = self.validation_monitor.history[-1][self.metric_idx]
+#         if np.isnan(current_value):
+#             raise Exception('nan detected')
+#
+#         if current_value * self.m < self.best_value * self.m:
+#             self.best_value = current_value
+#             self.waiting = 0
+#             self.absolute_waiting = 0
+#             if self.params:
+#                 self.best_params = [p.get_value() for p in self.params]
+#         else:
+#             self.waiting += 1
+#             self.absolute_waiting += 1
+#
+#         strs = ['Learning rate: {}, waiting {}/{}, absolute waiting {}/{}, '
+#                 'best {} = {}'.format(
+#             self.lr.get_value(), self.waiting, self.patience,
+#             self.absolute_waiting, self.absolute_patience, self.metric_name,
+#             self.best_value)]
+#
+#         if self.waiting > self.patience:
+#             self.lr.set_value(self.lr.get_value() / self.decay_rate)
+#             self.waiting = 0
+#             msg = 'Learning rate decreased'
+#             if self.params:
+#                 for p, v in zip(self.params, self.best_params):
+#                     p.set_value(v)
+#                 msg += '... best network re-loaded'
+#             strs.append(msg)
+#         return strs
+#
+#     def check_condition_virtual(self, batch_id, epoch_id):
+#         res = False
+#         if self.absolute_waiting > self.absolute_patience:
+#             res = 'Patience exceeded'
+#         elif self.lr.get_value() < self.min_value:
+#             res = 'Learning rate too small'
+#
+#         if res and self.params:
+#             for p, v in zip(self.params, self.best_params):
+#                 p.set_value(v)
+#             res += '... best network re-loaded'
+#
+#         if res:
+#             res = [res]
+#         return res
