@@ -348,7 +348,7 @@ class MetricMonitor(Monitor):
         # Divide monitored metrics and corresponding aggregation schemes
         aggregation_functions = []
         metrics = []
-        default_agg = lambda x, n_batches: x / float(n_batches)
+        default_agg = lambda x, n_datapoints: x / float(n_datapoints)
         for i, metric_aggfun in enumerate(metrics_with_aggfun):
             if isinstance(metric_aggfun, tuple):
                 aggregation_functions.append(metric_aggfun[1])
@@ -440,7 +440,7 @@ class MetricMonitor(Monitor):
 
         # Compute the metrics from the tensor values
         metric_values = []
-        for metric, agg_scheme in zip(self.metrics, self.agg_fun):
+        for metric in self.metrics:
             values = [tensor_values[i] for i in self.input_links[metric]]
             if isinstance(metric, theano.Variable):
                 res = values[0]
