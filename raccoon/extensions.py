@@ -78,7 +78,7 @@ class Extension(object):
         """
         return True
 
-    def execute(self, batch_id, epoch_id):
+    def execute(self, batch_id, epoch_id=None):
         """The method that is called when the extension is executed.
 
         Do not re-implement this method but execute_virtual instead.
@@ -97,7 +97,7 @@ class Extension(object):
         self.total_spent_time_in_ext += te - ts
         return te - ts, msg
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         """The method which should be re-implemented.
         """
         return ['Extension was executed']
@@ -288,7 +288,7 @@ class ExternalMetricMonitor(Monitor):
         self.history = []
         self.iterations = []
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         self.current_spent_time = np.zeros(len(self.metrics))
 
         # Compute the metrics from the tensor values
@@ -442,7 +442,7 @@ class MetricMonitor(Monitor):
         self.history = []
         self.iterations = []
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         metric_values = self.compute_metrics()
         strs = self.get_str(metric_values)
         self.history.append(metric_values)
@@ -542,15 +542,18 @@ class ValidationMonitor(MetricMonitor):
         return metric_values
 
 
+ValidMonitor = ValidationMonitor
+
+
 class TrainMonitor(MetricMonitor):
     """
     Extension required by `class:Trainer` to process_batch updates and monitor
     metrics (either tensors or MonitoredQuantity objects).
     """
 
-    def __init__(self, freq, inputs, metrics, updates, minibatch_dim=(0, 0),
-                 givens=None, **kwargs):
-        MetricMonitor.__init__(self, 'Training', freq, inputs, metrics,
+    def __init__(self, freq, inputs, metric_list, updates,
+                 minibatch_dim=(0, 0), givens=None, **kwargs):
+        MetricMonitor.__init__(self, 'Training', freq, inputs, metric_list,
                                minibatch_dim=minibatch_dim,
                                updates=updates, givens=givens, **kwargs)
 
@@ -563,7 +566,7 @@ class TrainMonitor(MetricMonitor):
         # display
         self.n_minibatches = 0
 
-    def execute(self, batch_id, epoch_id):
+    def execute(self, batch_id, epoch_id=None):
         begin = time.time()
         logs = self.execute_virtual(batch_id, epoch_id)
         self.time_since_last_execute += (time.time() - begin)
@@ -665,7 +668,7 @@ class LearningRateDecay(Extension, EndCondition):
 
         self.best_value = self.m * np.inf
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         current_value = self.validation_monitor.history[-1][self.metric_idx]
         if np.isnan(current_value):
             raise Exception('nan detected')
@@ -723,7 +726,7 @@ class LearningRateDecay2(Extension, EndCondition):
         self.decay_rate = np.float32((end_lr / init_lr.get_value()) ** (
             float(freq) / n_batches))
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         self.lr.set_value(self.lr.get_value() * self.decay_rate)
         strs = ['New learning rate: {}'.format(self.lr.get_value())]
         return strs
@@ -749,7 +752,7 @@ class Saver(Extension):
         self.folder_path = folder_path
         self.file_name = file_name
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         return self.save()
 
     def save(self, file_path=None):
@@ -901,6 +904,9 @@ class MetricSaver(Saver):
                      self.folder_path)])
 
 
+VariableSaver = MetricSaver
+
+
 class ResetParams(Extension):
     def __init__(self, freq, params, monitor, metric_name, values_to_avoid,
                  idx=0):
@@ -924,7 +930,7 @@ class ResetParams(Extension):
         current_value = self.monitor.history[-1][self.metric_idx]
         return current_value in self.values_to_avoid
 
-    def execute_virtual(self, batch_id, epoch_id):
+    def execute_virtual(self, batch_id, epoch_id=None):
         param_values = [np.random.permutation(p.flat).reshape(p.shape)
                         for p in self.init_param_values]
 
