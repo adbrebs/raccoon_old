@@ -341,7 +341,7 @@ class MetricMonitor(Monitor):
         represents the metric. The other keys are optional:
         - 'counter': the counter, a quantity by which the
             aggregated metric divided, before 'norm_fun' is applied. If not
-            provided, its default value is default_batch_size.
+            provided, its default value is default_counter.
         - 'agg_fun': a function that takes two minibatch metric values and
             aggregate them.
         - 'norm_fun': a function that transforms the total metric and the
@@ -357,9 +357,9 @@ class MetricMonitor(Monitor):
 
             final_metric_value = norm_fun(total_metric, total_counter)
 
-    default_batch_size: int or tensor variable (default None)
+    default_counter: int or tensor variable (default None)
         If a provided metric is not a dictionary or does not have a 'counter'
-        key, it will use default_batch_size as counter.
+        key, it will use default_counter as counter.
 
     inputs: list of theano tensors
         the tensor inputs required to compute the metrics
@@ -368,7 +368,7 @@ class MetricMonitor(Monitor):
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 default_batch_size=None, updates=None, givens=None, **kwargs):
+                 default_counter=1, updates=None, givens=None, **kwargs):
 
         # Divide monitored metrics and corresponding aggregation schemes
         metrics = []
@@ -376,18 +376,18 @@ class MetricMonitor(Monitor):
         self.agg_funs = []
         self.norm_funs = []
 
-        if isinstance(default_batch_size, int):
-            default_batch_size = (np.array(default_batch_size) *
-                                  T.ones((1,), dtype=floatX))[0]
-
         for i, metric_dict in enumerate(metric_list):
             if not isinstance(metric_dict, dict):
                 metric_dict = {'metric': metric_dict}
 
             if 'counter' not in metric_dict:
-                if not default_batch_size:
+                if not default_counter:
                     raise Exception('A default batch size should be provided.')
-                metric_dict['counter'] = default_batch_size
+                metric_dict['counter'] = default_counter
+
+            if isinstance(metric_dict['counter'], int):
+                metric_dict['counter'] = (np.array(metric_dict['counter']) *
+                                          T.ones((1,), dtype=floatX))[0]
 
             metrics.append(metric_dict['metric'])
             counters.append(metric_dict['counter'])
@@ -514,12 +514,12 @@ class ValidationMonitor(MetricMonitor):
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 data_generator, default_batch_size=None,
+                 data_generator, default_counter=1,
                  updates=None, givens=None, apply_at_the_end=True,
                  apply_at_the_start=False, init_states=None, **kwargs):
         MetricMonitor.__init__(
             self, name_extension, freq, inputs, metric_list,
-            default_batch_size=default_batch_size, updates=updates,
+            default_counter=default_counter, updates=updates,
             givens=givens, apply_at_the_end=apply_at_the_end,
             apply_at_the_start=apply_at_the_start, **kwargs)
         self.data_generator = data_generator
@@ -564,10 +564,10 @@ class TrainMonitor(MetricMonitor):
     """
 
     def __init__(self, freq, inputs, metric_list, updates,
-                 default_batch_size=None, givens=None, **kwargs):
+                 default_counter=1, givens=None, **kwargs):
         MetricMonitor.__init__(
             self, 'Training', freq, inputs, metric_list,
-            default_batch_size=default_batch_size,
+            default_counter=default_counter,
             updates=updates, givens=givens, **kwargs)
 
         self.time_since_last_execute = 0
