@@ -334,6 +334,10 @@ class MetricMonitor(Monitor):
     minibatch_dim: tuple of two integers (default (0, 0))
         Indicates which output of the generator and which dimension
         corresponds to the batch size. The default value is the most common.
+        Is ignored if batch_size is None.
+    batch_size: int (default None)
+        If the batch size is fixed and known in advance. If None, uses
+        minibatch_dim. If not None, discards minibatch_dim.
     metric_list: a list of either (a) theano tensors or MonitoredQuantity
             objects or (b) tuple (tensor or MonitoredQuantity, scalar tensor)
         the list of metrics that are monitored by this extension.
@@ -361,13 +365,15 @@ class MetricMonitor(Monitor):
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 minibatch_dim=(0, 0), updates=None, givens=None, **kwargs):
+                 minibatch_dim=(0, 0), batch_size=None, updates=None,
+                 givens=None, **kwargs):
 
         # Divide monitored metrics and corresponding aggregation schemes
         metrics = []
         counters = []
 
         self.minibatch_dim = minibatch_dim
+        self.batch_size = batch_size
 
         for i, metric_tuple in enumerate(metric_list):
             if not isinstance(metric_tuple, tuple):
@@ -459,8 +465,11 @@ class MetricMonitor(Monitor):
         """Computes and return the values of the metrics for given inputs of
         a given minibatch.
         """
-        minibatch_data, minibatch_dim = self.minibatch_dim
-        batch_size = inputs[minibatch_data].shape[minibatch_dim]
+        if self.batch_size:
+            batch_size = self.batch_size
+        else:
+            minibatch_data, minibatch_dim = self.minibatch_dim
+            batch_size = inputs[minibatch_data].shape[minibatch_dim]
 
         # List of values of the required tensors. We have to compute the
         # metrics from them.
@@ -504,13 +513,13 @@ class ValidationMonitor(MetricMonitor):
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 data_generator, minibatch_dim=(0, 0), updates=None,
-                 givens=None, apply_at_the_end=True, apply_at_the_start=False,
-                 init_states=None, **kwargs):
+                 data_generator, minibatch_dim=(0, 0), batch_size=None,
+                 updates=None, givens=None, apply_at_the_end=True,
+                 apply_at_the_start=False, init_states=None, **kwargs):
         MetricMonitor.__init__(
             self, name_extension, freq, inputs, metric_list,
-            minibatch_dim=minibatch_dim, updates=updates, givens=givens,
-            apply_at_the_end=apply_at_the_end,
+            minibatch_dim=minibatch_dim, batch_size=batch_size,
+            updates=updates, givens=givens, apply_at_the_end=apply_at_the_end,
             apply_at_the_start=apply_at_the_start, **kwargs)
         self.data_generator = data_generator
         self.init_states = init_states
@@ -552,10 +561,11 @@ class TrainMonitor(MetricMonitor):
     """
 
     def __init__(self, freq, inputs, metric_list, updates,
-                 minibatch_dim=(0, 0), givens=None, **kwargs):
-        MetricMonitor.__init__(self, 'Training', freq, inputs, metric_list,
-                               minibatch_dim=minibatch_dim,
-                               updates=updates, givens=givens, **kwargs)
+                 minibatch_dim=(0, 0), batch_size=None, givens=None, **kwargs):
+        MetricMonitor.__init__(
+            self, 'Training', freq, inputs, metric_list,
+            minibatch_dim=minibatch_dim, batch_size=batch_size,
+            updates=updates, givens=givens, **kwargs)
 
         self.time_since_last_execute = 0
 
