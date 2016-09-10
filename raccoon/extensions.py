@@ -331,32 +331,35 @@ class MetricMonitor(Monitor):
     ----------
     inputs: list of theano tensors
         tensors necessary to compute the metrics
-    minibatch_dim: tuple of two integers (default (0, 0))
-        Indicates which output of the generator and which dimension
-        corresponds to the batch size. The default value is the most common.
-        Is ignored if batch_size is None.
-    batch_size: int (default None)
-        If the batch size is fixed and known in advance. If None, uses
-        minibatch_dim. If not None, discards minibatch_dim.
     metric_list: a list of either (a) theano tensors or MonitoredQuantity
-            objects or (b) tuple (tensor or MonitoredQuantity, scalar tensor)
+            objects or (b) dict {'metric': tensor or MonitoredQuantity,
+            'counter': scalar tensor (optional), 'agg_fun': elemwise function
+            of two arguments (optional), 'norm_fun': elemwise function of
+            two arguments (optional)}
         the list of metrics that are monitored by this extension.
-        If a tuple is provided, the first term is the metric and the second
-        term corresponds to a quantity by which the metric is multiplied at
-        each minibatch and finally normalized with at the end. The precise
-        processing pattern is sketched below:
+        If a dict is provided, the key 'metric' has to be provided and
+        represents the metric. The other keys are optional:
+        - 'counter': the counter, a quantity by which the
+            aggregated metric divided, before 'norm_fun' is applied. If not
+            provided, its default value is default_batch_size.
+        - 'agg_fun': a function that takes two minibatch metric values and
+            aggregate them.
+        - 'norm_fun': a function that transforms the total metric and the
+            total counter.
+        The precise processing pattern is sketched below:
 
             total_metric = 0
             total_counter = 0
             for minibatch in generator:
                 metric, counter = compute_metric(minibatch)
-                total_metric += metric
+                total_metric = agg_fun(total_metric, metric)
                 total_counter += counter
 
-            final_metric_value = total_metric / total_counter
+            final_metric_value = norm_fun(total_metric, total_counter)
 
-        By default, if no second term is provided or if the second term is
-        None, the counter will be set to the batch_size (which may vary!).
+    default_batch_size: int or tensor variable (default None)
+        If a provided metric is not a dictionary or does not have a 'counter'
+        key, it will use default_batch_size as counter.
 
     inputs: list of theano tensors
         the tensor inputs required to compute the metrics
@@ -365,27 +368,31 @@ class MetricMonitor(Monitor):
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 minibatch_dim=(0, 0), batch_size=None, updates=None,
-                 givens=None, **kwargs):
+                 default_batch_size=None, updates=None, givens=None, **kwargs):
 
         # Divide monitored metrics and corresponding aggregation schemes
         metrics = []
         counters = []
+        self.agg_funs = []
+        self.norm_funs = []
 
-        self.minibatch_dim = minibatch_dim
-        self.batch_size = batch_size
+        if isinstance(default_batch_size, int):
+            default_batch_size = (np.array(default_batch_size) *
+                                  T.ones((1,), dtype=floatX))[0]
 
-        for i, metric_tuple in enumerate(metric_list):
-            if not isinstance(metric_tuple, tuple):
-                metric_tuple = (metric_tuple, None)
+        for i, metric_dict in enumerate(metric_list):
+            if not isinstance(metric_dict, dict):
+                metric_dict = {'metric': metric_dict}
 
-            if len(metric_tuple) > 2:
-                raise ValueError
-            metrics.append(metric_tuple[0])
-            if metric_tuple[1]:
-                counters.append(metric_tuple[1])
-            else:
-                counters.append((np.array(-1.4242) * T.ones((1,), dtype=floatX)).sum())
+            if 'counter' not in metric_dict:
+                if not default_batch_size:
+                    raise Exception('A default batch size should be provided.')
+                metric_dict['counter'] = default_batch_size
+
+            metrics.append(metric_dict['metric'])
+            counters.append(metric_dict['counter'])
+            self.agg_funs.append(metric_dict.get('agg_fun', np.add))
+            self.norm_funs.append(metric_dict.get('norm_fun', lambda a, b: a / b))
 
         Monitor.__init__(self, name_extension, freq, metrics,
                          **kwargs)
@@ -465,17 +472,11 @@ class MetricMonitor(Monitor):
         """Computes and return the values of the metrics for given inputs of
         a given minibatch.
         """
-        if self.batch_size:
-            batch_size = self.batch_size
-        else:
-            minibatch_data, minibatch_dim = self.minibatch_dim
-            batch_size = inputs[minibatch_data].shape[minibatch_dim]
 
         # List of values of the required tensors. We have to compute the
         # metrics from them.
         tensor_values = self.f(*inputs)
         counter_values = np.array(tensor_values[-len(self.metrics):])
-        counter_values[counter_values == -1.4242] = batch_size
         tensor_values = tensor_values[:-len(self.metrics)]
 
         # Compute the metrics from the tensor values
@@ -513,13 +514,13 @@ class ValidationMonitor(MetricMonitor):
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 data_generator, minibatch_dim=(0, 0), batch_size=None,
+                 data_generator, default_batch_size=None,
                  updates=None, givens=None, apply_at_the_end=True,
                  apply_at_the_start=False, init_states=None, **kwargs):
         MetricMonitor.__init__(
             self, name_extension, freq, inputs, metric_list,
-            minibatch_dim=minibatch_dim, batch_size=batch_size,
-            updates=updates, givens=givens, apply_at_the_end=apply_at_the_end,
+            default_batch_size=default_batch_size, updates=updates,
+            givens=givens, apply_at_the_end=apply_at_the_end,
             apply_at_the_start=apply_at_the_start, **kwargs)
         self.data_generator = data_generator
         self.init_states = init_states
@@ -538,10 +539,12 @@ class ValidationMonitor(MetricMonitor):
 
         for data in self.data_generator():
             m_values, c_values = self.compute_metrics_minibatch(*data)
-            metric_values += m_values
+            for i, agg_fun in enumerate(self.agg_funs):
+                metric_values[i] = agg_fun(metric_values[i], m_values[i])
             counter_values += c_values
 
-        metric_values /= counter_values
+        for i, norm_fun in enumerate(self.norm_funs):
+            metric_values[i] = norm_fun(metric_values[i], counter_values[i])
 
         # Restore initial states
         if self.init_states:
@@ -561,10 +564,10 @@ class TrainMonitor(MetricMonitor):
     """
 
     def __init__(self, freq, inputs, metric_list, updates,
-                 minibatch_dim=(0, 0), batch_size=None, givens=None, **kwargs):
+                 default_batch_size=None, givens=None, **kwargs):
         MetricMonitor.__init__(
             self, 'Training', freq, inputs, metric_list,
-            minibatch_dim=minibatch_dim, batch_size=batch_size,
+            default_batch_size=default_batch_size,
             updates=updates, givens=givens, **kwargs)
 
         self.time_since_last_execute = 0
@@ -589,7 +592,11 @@ class TrainMonitor(MetricMonitor):
 
     def compute_metrics(self):
 
-        res = self.current_metric_values / self.current_metric_counters
+        res = np.zeros_like(self.current_metric_values)
+        for i, norm_fun in enumerate(self.norm_funs):
+            res[i] = norm_fun(self.current_metric_values[i],
+                              self.current_metric_counters[i])
+
         # Reset current metric values for next pass
         self.current_metric_values = np.zeros(self.n_outputs, dtype=floatX)
         self.current_metric_counters = np.zeros(self.n_outputs, dtype=floatX)
@@ -602,7 +609,9 @@ class TrainMonitor(MetricMonitor):
 
         m_values, c_values = self.compute_metrics_minibatch(*inputs)
 
-        self.current_metric_values += m_values
+        for i, agg_fun in enumerate(self.agg_funs):
+            self.current_metric_values[i] = agg_fun(
+                self.current_metric_values[i], m_values[i])
         self.current_metric_counters += c_values
         self.n_minibatches += 1
         self.time_since_last_execute += (time.time() - begin)
