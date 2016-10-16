@@ -457,6 +457,7 @@ class EfficientAttentionLayer(MergeLayer):
 
         if self.masked:
             seq_input *= T.shape_padright(seq_mask)
+
         # (batch_size, n_hidden_question, n_hidden_question)
         covariance = T.batched_dot(seq_input.dimshuffle(0, 2, 1), seq_input)
         if self.init_state:
@@ -464,15 +465,14 @@ class EfficientAttentionLayer(MergeLayer):
             init_state.default_update = covariance
 
         # (batch_size, n_hidden_question)
-        att = 1000 * T.batched_dot(covariance, condition)
+        # att = 1000 * T.batched_dot(covariance, condition)
+        att = T.batched_dot(covariance, condition)
 
-        if not self.covariance_decay:
-            if self.masked:
-                att /= T.sum(seq_mask, axis=1, keepdims=True)
-            else:
-                att /= T.cast(seq_input.shape[1], floatX)
-        # norm2_att = T.sum(att * condition, axis=1, keepdims=True)
-        # att = 1000 * att / norm2_att
+        # if not self.covariance_decay:
+        #     if self.masked:
+        #         att /= T.sum(seq_mask, axis=1, keepdims=True)
+        #     else:
+        #         att /= T.cast(seq_input.shape[1], floatX)
         return att
 
 
@@ -542,6 +542,9 @@ def create_deep_rnn(layer, layer_class, depth, layer_mask=None, residual=False,
     """
     (Deep) RNN with possible skip/residual connections, bidirectional, dropout
     """
+    if init_state_layers:
+        assert(len(init_state_layers) == depth)
+
     layers = [layer]
     for i in range(depth):
         if skip_connections and i > 0:
@@ -571,16 +574,39 @@ def create_deep_rnn(layer, layer_class, depth, layer_mask=None, residual=False,
         if dropout:
             layer = DropoutLayer(layer, p=dropout)
 
+        # We need to apply the mask, otherwise there are problems with multiple
+        # layers
+        if layer_mask and i < depth - 1:
+            layer = apply_mask(layer, layer_mask)
         layers.append(layer)
 
     return layers[1:]
 
 
-def non_flattening_dense_layer(layer, mask, num_units, *args, **kwargs):
+def non_flattening_dense_layer(layer, batchsize, seqlen, num_units, *args, **kwargs):
     """
     Lasagne dense layer which is not flattening the outputs
     """
-    batchsize, seqlen = mask.input_var.shape
     l_flat = ReshapeLayer(layer, (-1, [2]))
     l_dense = DenseLayer(l_flat, num_units, *args, **kwargs)
-    return ReshapeLayer(l_dense, (batchsize, seqlen, -1))
+    return ReshapeLayer(l_dense, (batchsize, seqlen, num_units))
+
+
+class SelectLayer(MergeLayer):
+    """
+    indices should be 2D.
+    """
+    def __init__(self, indices, sequence, **kwargs):
+        super(SelectLayer, self).__init__([indices, sequence], **kwargs)
+
+    def get_output_shape_for(self, input_shapes):
+
+        s_ind = input_shapes[0]
+        s_seq = input_shapes[1]
+
+        return s_ind + s_seq[2:]
+
+    def get_output_for(self, inputs, **kwargs):
+        idx = inputs[0]
+        seq = inputs[1]
+        return seq[T.arange(0, idx.shape[0])[:, None], idx]

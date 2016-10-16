@@ -219,113 +219,69 @@ class NoTraining(EndCondition):
         return False
 
 
-class Monitor(Extension):
-    """
-    Base class for monitoring different metrics, which can be:
-    - external metrics that do not depend on theano tensors: you should use
-        :class:`ExternalMetricMonitor`.
-    - metrics that depend directly on theano tensors computed during training:
-        you should use :class:`TrainMonitor`.
-    - metrics that depend on theano tensors computed on another dataset or a
-        data generator: you should use :class:`ValidationMonitor`.
-    """
-
-    def __init__(self, name_extension, freq, metrics, **kwargs):
-        Extension.__init__(self, name_extension, freq, **kwargs)
-        self.metrics = metrics
-
-        self.metric_names = []
-        for metric in metrics:
-            if isinstance(metric, MonitoredQuantity):
-                self.metric_names.extend(metric.names)
-            else:
-                self.metric_names.append(metric.name)
-
-        if None in self.metric_names:
-            raise Exception('A metric provided does not have a name. Set it'
-                            'with metric.name="zoulou"')
-
-    def find_metric_from_name(self, metric_name, return_mode='raise'):
-        """
-        Returns the monitored metric given its name
-
-        return_mode: string {'raise', 'None'}
-        """
-        for metric in self.metrics:
-            if isinstance(metric, MonitoredQuantity):
-                if metric_name in metric.names:
-                    return metric
-            else:
-                if metric.name == metric_name:
-                    return metric
-
-        if return_mode == 'raise':
-            raise ValueError('No metric found for name {}'.format(metric_name))
-        elif return_mode == 'None':
-            return None
-        else:
-            raise ValueError
-
-
-class ExternalMetricMonitor(Monitor):
-    """Extension to monitor MonitoredQuantity metrics that don't depend
-    on theano tensors.
-
-    Parameters:
-    -----------
-    monitored_quantities: list of MonitoredQuantity objets
-        the list of special metrics to be monitored. These metrics should not
-        require any theano tensor values to be computed.
-    """
-
-    def __init__(self, name_extension, freq, metrics, **kwargs):
-        Monitor.__init__(self, name_extension, freq, metrics, **kwargs)
-
-        # Will store the time required to compute each individual metric
-        self.current_spent_time = np.zeros(len(self.metrics))
-
-        # Stores all the values of the monitored metrics.
-        self.history = []
-        self.iterations = []
-
-    def execute_virtual(self, batch_id, epoch_id=None):
-        self.current_spent_time = np.zeros(len(self.metrics))
-
-        # Compute the metrics from the tensor values
-        metric_values = []
-        for i, metric in enumerate(self.metrics):
-            begin = time.time()
-            res = metric.calculate()
-            self.current_spent_time[i] = time.time() - begin
-            if not isinstance(res, list):
-                res = [res]
-            metric_values.extend(res)
-
-        metric_values = np.array(metric_values)
-
-        strs = self.get_str(metric_values)
-        self.history.append(metric_values)
-        self.iterations.append(batch_id, epoch_id)
-        return strs
-
-    def get_str(self, metric_values):
-        strs = []
-        c = 0
-        for timing, metric in zip(self.current_spent_time, self.metrics):
-            strs.append('Computed in {:.3g} seconds:'.format(timing))
-            metric.write_str(strs, metric_values[c:c + metric.n_outputs], '  ')
-            c += metric.n_outputs
-
-        return strs
+# class ExternalMetricMonitor(Monitor):
+#     """Extension to monitor MonitoredQuantity metrics that don't depend
+#     on theano tensors.
+#
+#     Parameters:
+#     -----------
+#     monitored_quantities: list of MonitoredQuantity objets
+#         the list of special metrics to be monitored. These metrics should not
+#         require any theano tensor values to be computed.
+#     """
+#
+#     def __init__(self, name_extension, freq, metrics, **kwargs):
+#         Monitor.__init__(self, name_extension, freq, metrics, **kwargs)
+#
+#         # Will store the time required to compute each individual metric
+#         self.current_spent_time = np.zeros(len(self.metrics))
+#
+#         # Stores all the values of the monitored metrics.
+#         self.history = []
+#         self.iterations = []
+#
+#     def execute_virtual(self, batch_id, epoch_id=None):
+#         self.current_spent_time = np.zeros(len(self.metrics))
+#
+#         # Compute the metrics from the tensor values
+#         metric_values = []
+#         for i, metric in enumerate(self.metrics):
+#             begin = time.time()
+#             res = metric.calculate()
+#             self.current_spent_time[i] = time.time() - begin
+#             if not isinstance(res, list):
+#                 res = [res]
+#             metric_values.extend(res)
+#
+#         metric_values = np.array(metric_values)
+#
+#         strs = self.get_str(metric_values)
+#         self.history.append(metric_values)
+#         self.iterations.append(batch_id, epoch_id)
+#         return strs
+#
+#     def get_str(self, metric_values):
+#         strs = []
+#         c = 0
+#         for timing, metric in zip(self.current_spent_time, self.metrics):
+#             strs.append('Computed in {:.3g} seconds:'.format(timing))
+#             metric.write_str(strs, metric_values[c:c + metric.n_outputs], '  ')
+#             c += metric.n_outputs
+#
+#         return strs
 
 
-class MetricMonitor(Monitor):
+class MetricMonitor(Extension):
     """Extension to monitor metrics, which are either theano tensors or
     :class:`MonitoredQuantity` objects.
 
     It compiles a theano function internally.
 
-    This is an abstract class.
+    This is an abstract class with two children classes:
+    - :class:`TrainMonitor`: the extension responsible for training and
+        monitoring metrics on the training dataset
+    - :class:`ValidationMonitor`: an extension for monitoring metrics on a
+        given validation dataset dataset or a data generator.
 
     Parameters
     ----------
@@ -357,7 +313,7 @@ class MetricMonitor(Monitor):
 
             final_metric_value = norm_fun(total_metric, total_counter)
 
-    default_counter: int or tensor variable (default None)
+    default_counter: int or tensor variable (default 1)
         If a provided metric is not a dictionary or does not have a 'counter'
         key, it will use default_counter as counter.
 
@@ -369,12 +325,15 @@ class MetricMonitor(Monitor):
 
     def __init__(self, name_extension, freq, inputs, metric_list,
                  default_counter=1, updates=None, givens=None, **kwargs):
+        Extension.__init__(self, name_extension, freq, **kwargs)
 
         # Divide monitored metrics and corresponding aggregation schemes
-        metrics = []
+        self.metrics = metrics = []
+        self.metric_names = []
         counters = []
         self.agg_funs = []
         self.norm_funs = []
+        self.updates = updates
 
         for i, metric_dict in enumerate(metric_list):
             if not isinstance(metric_dict, dict):
@@ -389,13 +348,19 @@ class MetricMonitor(Monitor):
                 metric_dict['counter'] = (np.array(metric_dict['counter']) *
                                           T.ones((1,), dtype=floatX))[0]
 
-            metrics.append(metric_dict['metric'])
+            metric = metric_dict['metric']
+            metrics.append(metric)
+            if isinstance(metric, MonitoredQuantity):
+                self.metric_names.extend(metric.names)
+            else:
+                self.metric_names.append(metric.name)
             counters.append(metric_dict['counter'])
             self.agg_funs.append(metric_dict.get('agg_fun', np.add))
             self.norm_funs.append(metric_dict.get('norm_fun', lambda a, b: a / b))
 
-        Monitor.__init__(self, name_extension, freq, metrics,
-                         **kwargs)
+        if None in self.metric_names:
+            raise Exception('A metric provided does not have a name. Set it'
+                            'with metric.name="zoulou"')
 
         # Total number of outputs (some monitored metrics may have several
         # outputs). output_links {metric: indices of outputs} links each metric
@@ -454,6 +419,27 @@ class MetricMonitor(Monitor):
         # Stores all the values of the monitored metrics.
         self.history = []
         self.iterations = []
+
+    def find_metric_from_name(self, metric_name, return_mode='raise'):
+        """
+        Returns the monitored metric given its name
+
+        return_mode: string {'raise', 'None'}
+        """
+        for metric in self.metrics:
+            if isinstance(metric, MonitoredQuantity):
+                if metric_name in metric.names:
+                    return metric
+            else:
+                if metric.name == metric_name:
+                    return metric
+
+        if return_mode == 'raise':
+            raise ValueError('No metric found for name {}'.format(metric_name))
+        elif return_mode == 'None':
+            return None
+        else:
+            raise ValueError
 
     def execute_virtual(self, batch_id, epoch_id=None):
         metric_values = self.compute_metrics()
@@ -617,7 +603,7 @@ class TrainMonitor(MetricMonitor):
         self.time_since_last_execute += (time.time() - begin)
 
 
-class LearningRateDecay(Extension, EndCondition):
+class LearningRateDecayValidation(Extension, EndCondition):
     """
     Both extension and ending condition that decreases the learning rate if
     there is no improvement on a metric monitored by a monitoring extension.
@@ -659,8 +645,8 @@ class LearningRateDecay(Extension, EndCondition):
     def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
                  max_patience=7, decay_rate=2., min_value=1e-12, params=None,
                  metric_mode='min'):
-        Extension.__init__(self, 'Learning rate', monitor.freq)
-        EndCondition.__init__(self, 'Learning rate', monitor.freq)
+        Extension.__init__(self, 'Learning rate decay', monitor.freq)
+        EndCondition.__init__(self, 'Learning rate decay', monitor.freq)
         self.lr = learning_rate
         self.patience = patience
         self.absolute_patience = max_patience
@@ -736,10 +722,10 @@ class LearningRateDecay(Extension, EndCondition):
         return res
 
 
-class LearningRateDecay2(Extension, EndCondition):
+class LearningRateLinearRange(Extension, EndCondition):
     def __init__(self, init_lr, end_lr, freq, n_batches):
-        Extension.__init__(self, 'Learning rate', freq)
-        EndCondition.__init__(self, 'Learning rate', freq)
+        Extension.__init__(self, 'Learning rate decay', freq)
+        EndCondition.__init__(self, 'Learning rate decay', freq)
         self.n_batches = n_batches
         self.lr = init_lr
         self.decay_rate = np.float32((end_lr / init_lr.get_value()) ** (
@@ -755,6 +741,25 @@ class LearningRateDecay2(Extension, EndCondition):
         if batch_id > self.n_batches:
             res = ['Learning rate too small']
         return res
+
+
+class LearningRateDecay(Extension):
+    def __init__(self, init_lr, decay, decay_start_after, freq):
+        Extension.__init__(self, 'Learning rate decay', freq)
+        self.lr = init_lr
+        self.decay_rate = decay
+        self.decay_start_after = decay_start_after
+        self.n_times_decayed = 0
+
+    def condition_virtual(self, batch_id, epoch_id):
+        """The extension might only be run if certain conditions are met.
+        """
+        self.n_times_decayed += 1
+        return self.n_times_decayed > self.decay_start_after
+
+    def execute_virtual(self, batch_id, epoch_id=None):
+        self.lr.set_value(self.lr.get_value() * self.decay_rate)
+        return ['New learning rate: {}'.format(self.lr.get_value())]
 
 
 class Saver(Extension):

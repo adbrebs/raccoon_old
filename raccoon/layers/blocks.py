@@ -108,16 +108,16 @@ class CovarianceMatrixUpdateRule:
         self.decay_r = decay_r
         self.normalize_length_seq = normalize_length_seq
 
-    def update_matrix(self, h, mask, C_pre):
+    def update_matrix(self, timestep, h, mask, C_pre):
         h = T.switch(mask[:, None], h, .0)
 
-        update = self.compute_update(h, C_pre)
+        update = self.compute_update(timestep, h, C_pre)
 
         update_square = update.dimshuffle(0, 1, 'x') * update.dimshuffle(0, 'x', 1)
 
         return self.decay_l * C_pre + self.decay_r * update_square, update
 
-    def compute_update(self, h, C_pre):
+    def compute_update(self, timestep, h, C_pre):
         raise NotImplemented
 
     def restore_previous_matrix(self, C, update):
@@ -153,7 +153,7 @@ class BasicCovariance(CovarianceMatrixUpdateRule):
             self, decay_l=decay_l, decay_r=decay_r,
             normalize_length_seq=normalize_length_seq)
 
-    def compute_update(self, h, C_pre):
+    def compute_update(self, timestep, h, C_pre):
         return h
 
 
@@ -163,20 +163,20 @@ class GatedCovariance(CovarianceMatrixUpdateRule):
     which features to update in the covariance matrix. It bases its decision
     on the current state h and on T.dot(h, C).
     """
-    def __init__(self):
+    def __init__(self, n_hidden=100):
         CovarianceMatrixUpdateRule.__init__(self)
-        ini = init.Normal(0.001)
-        n_hidden = 100
+        ini = init.Constant(0.0)
+        self.n_hidden = n_hidden
         self.W1 = shared(ini.sample((n_hidden, n_hidden)))
         self.W2 = shared(ini.sample((n_hidden, n_hidden)))
-        self.b = shared(init.Constant()((n_hidden,)))
+        self.b = shared(init.Constant(1.0)((n_hidden,)))
         self.params = [self.W1, self.W2, self.b]
 
-    def compute_update(self, h, C_pre):
-        a = T.sum(C_pre * h.dimshuffle(0, 'x', 1), axis=-1)
+    def compute_update(self, timestep, h, C_pre):
+        a = 1000*T.sum(C_pre * h.dimshuffle(0, 'x', 1), axis=-1) / (timestep + 1)
         b = h
         alpha = T.nnet.sigmoid(T.dot(a, self.W1) + T.dot(b, self.W2) + self.b)
-        update = h * (1 - alpha)
+        update = h * alpha
         return update
 
 
@@ -222,7 +222,7 @@ class EfficientAttentionDesign:
         if not seq_mask:
             seq_mask = T.ones(seq_inputs.shape[:-1])
 
-        def step(inputs, mask, h_pre, C_pre):
+        def step(timestep, inputs, mask, h_pre, C_pre):
             """
             A single timestep.
 
@@ -236,13 +236,15 @@ class EfficientAttentionDesign:
             h = self.recurrent_fun(inputs, mask, h_pre)
 
             C, update = self.attention_update_rule.update_matrix(
-                h, mask, C_pre)
+                timestep, h, mask, C_pre)
 
             return h, update, C
 
+        timesteps = T.arange(0, seq_inputs.shape[0], dtype=floatX)
+
         (seq_h, seq_updates, seq_C), _ = theano.scan(
             fn=step,
-            sequences=[seq_inputs, seq_mask],
+            sequences=[timesteps, seq_inputs, seq_mask],
             outputs_info=[h_ini, None, C_ini],
             name='step')
 

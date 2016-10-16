@@ -1,7 +1,9 @@
+import theano
 import theano.tensor as T
 
 import lasagne
 
+floatX = theano.config.floatX
 
 def poly_softmax(eps=1e-2, order=2):
     def f(x):
@@ -58,30 +60,40 @@ def softmax_abs(x):
     return lasagne.nonlinearities.softmax(T.abs_(x))
 
 
-def compute_rank_metrics(y_hat, y, ks=10):
+def compute_rank_metrics(y_hat, y, mask=None, ks=10):
     """
     Computes metrics related to the rank of the prediction:
     - mean rank
     - mean inverse rank
     - top-k for different values of k. ks can either be a list or a scalar.
+
+    mask and y_hat should have the same first dimension
     """
     if not isinstance(ks, list):
         ks = [ks]
 
     rank = T.sum(y_hat >= y_hat[T.arange(y_hat.shape[0]), y][:, None], axis=1)
 
+    if mask:
+        n_not_masked = mask.sum()
+    def mean(tensor):
+        if mask:
+            return (tensor * mask[:, None]).sum() / T.cast(n_not_masked, floatX)
+        else:
+            return tensor.sum() / T.cast(tensor.size, floatX)
+
     topks = []
     for k in ks:
-        res = T.mean(rank > k)
+        res = mean(rank > k)
         res.name = "k={} error rate".format(k)
         topks.append(res)
 
-    mean_rank = rank.mean()
+    mean_rank = mean(rank)
     std_rank = rank.std()
     mean_rank.name = 'mean_rank'
-    mean_inv_rank = (1.0/rank).mean()
+    mean_inv_rank = mean(1.0/rank)
     mean_inv_rank.name = 'mean_inv_rank'
-    mean_log_rank = (T.log(rank)).mean()
+    mean_log_rank = mean(T.log(rank))
     mean_log_rank.name = 'mean_log_rank'
     return mean_rank, std_rank, mean_inv_rank, mean_log_rank, topks
 

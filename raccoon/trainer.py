@@ -71,14 +71,14 @@ class Trainer:
 
                     res = self.check_extensions_conditions()
 
-                    if self.after_epoch_fun:
-                        self.after_epoch_fun()
-
                     if res:
                         self.finish()
                         is_finished = True
 
                 if not is_finished:
+                    if self.after_epoch_fun:
+                        self.after_epoch_fun()
+
                     res = self.check_extensions_conditions(end_epoch=True)
                     if res:
                         self.finish()
