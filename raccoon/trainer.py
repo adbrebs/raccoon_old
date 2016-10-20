@@ -10,10 +10,13 @@ class Trainer:
         number of batches processed
     epoch: int
         number of epochs processed
+    execute_if_exception: function or None (default None)
+        function that runs if any exception is thrown
     """
     def __init__(self, train_monitor, data_generator, extensions=None,
                  end_conditions=None, custom_process_fun=None,
-                 after_epoch_fun=None, print_wrap_width=80):
+                 after_epoch_fun=None, print_wrap_width=80,
+                 execute_if_exception=None):
         if not extensions:
             extensions = []
         if not end_conditions:
@@ -29,6 +32,7 @@ class Trainer:
         self.data_processing_time = 0
         self.custom_process_fun = custom_process_fun
         self.after_epoch_fun = after_epoch_fun
+        self.execute_if_exception = execute_if_exception
 
     def print_extensions_logs(self, extensions_logs):
         for ext, (timing, logs) in extensions_logs:
@@ -88,6 +92,11 @@ class Trainer:
             print 'Training interrupted by user.'
             self.finish()
 
+        except Exception:
+            if self.execute_if_exception:
+                self.execute_if_exception()
+            raise
+
     def train_minibatch(self, inputs):
         if self.custom_process_fun:
             self.custom_process_fun(inputs)
@@ -144,6 +153,9 @@ class Trainer:
         print '-' * 79
 
     def finish(self):
+        if self.execute_if_exception:
+            self.execute_if_exception()
+
         time_spent = time.time() - self.begin_time
         print '-' * 79
         print '-' * 79

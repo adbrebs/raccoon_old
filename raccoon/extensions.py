@@ -56,27 +56,32 @@ class Extension(object):
             True if the execution can be existed. False otherwise.
         """
         if not self.freq:
-            return False
+            freq_cond = False
 
-        if self.freq == 'epoch':
-            return end_epoch and self.condition(batch_id, epoch_id)
+        elif self.freq == 'epoch':
+            freq_cond = end_epoch # and self.condition(batch_id, epoch_id)
 
-        return ((not (batch_id % self.freq)) and
-                self.condition(batch_id, epoch_id))
+        else:
+            freq_cond = not (batch_id % self.freq)
 
-    def condition(self, batch_id, epoch_id):
+        return self.condition(freq_cond, batch_id, epoch_id)
+
+    def condition(self, freq_cond, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
+
+        freq_cond: boolean
+            True if the frequency condition is satisfied. False otherwise.
         """
         ts = time.time()
-        decision = self.condition_virtual(batch_id, epoch_id)
+        decision = self.condition_virtual(freq_cond, batch_id, epoch_id)
         te = time.time()
         self.total_spent_time_in_ext += te - ts
         return decision
 
-    def condition_virtual(self, batch_id, epoch_id):
+    def condition_virtual(self, freq_cond, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
         """
-        return True
+        return freq_cond
 
     def execute(self, batch_id, epoch_id=None):
         """The method that is called when the extension is executed.
@@ -640,11 +645,14 @@ class LearningRateDecayValidation(Extension, EndCondition):
         to include both the parameters of the network and those of the
         optimisation algorithm (such as momentum), you may want to give
         params=list(updates.keys()) as input.
+    nan_monitor: monitor or None (default None)
+        If monitor and nan are encountered in its history, reload the last
+        parameters and reduce the learning rate. If None, nan are ignored.
     """
 
     def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
                  max_patience=7, decay_rate=2., min_value=1e-12, params=None,
-                 metric_mode='min'):
+                 metric_mode='min', nan_monitor=None):
         Extension.__init__(self, 'Learning rate decay', monitor.freq)
         EndCondition.__init__(self, 'Learning rate decay', monitor.freq)
         self.lr = learning_rate
@@ -671,28 +679,41 @@ class LearningRateDecayValidation(Extension, EndCondition):
         else:
             raise ValueError
 
+        self.nan_monitor = nan_monitor
         self.best_value = self.m * np.inf
 
+    def condition_virtual(self, freq_cond, batch_id, epoch_id):
+        if not self.nan_monitor or not self.nan_monitor.history:
+            return freq_cond
+
+        if np.any(np.isnan(self.nan_monitor.history[-1])):
+            return True
+
+        return freq_cond
+
     def execute_virtual(self, batch_id, epoch_id=None):
-        current_value = self.validation_monitor.history[-1][self.metric_idx]
-        if np.isnan(current_value):
-            raise Exception('nan detected')
 
-        if current_value * self.m < self.best_value * self.m:
-            self.best_value = current_value
-            self.waiting = 0
+        if (self.nan_monitor and
+                np.any(np.isnan(self.nan_monitor.history[-1]))):
+            self.waiting = np.inf
             self.absolute_waiting = 0
-            if self.params:
-                self.best_params = [p.get_value() for p in self.params]
-        else:
-            self.waiting += 1
-            self.absolute_waiting += 1
+            self.nan_monitor.history.pop()
 
-        strs = ['Learning rate: {}, waiting {}/{}, absolute waiting {}/{}, '
-                'best {} = {}'.format(
-            self.lr.get_value(), self.waiting, self.patience,
-            self.absolute_waiting, self.absolute_patience, self.metric_name,
-            self.best_value)]
+        else:
+            current_value = self.validation_monitor.history[-1][
+                self.metric_idx]
+
+            if current_value * self.m < self.best_value * self.m:
+                self.best_value = current_value
+                self.waiting = 0
+                self.absolute_waiting = 0
+                if self.params:
+                    self.best_params = [p.get_value() for p in self.params]
+            else:
+                self.waiting += 1
+                self.absolute_waiting += 1
+
+        strs = []
 
         if self.waiting > self.patience:
             self.lr.set_value(self.lr.get_value() / self.decay_rate)
@@ -703,6 +724,14 @@ class LearningRateDecayValidation(Extension, EndCondition):
                     p.set_value(v)
                 msg += '... best network re-loaded'
             strs.append(msg)
+
+        strs.append(
+            'Learning rate: {}, waiting {}/{}, absolute waiting {}/{}'
+            ', best {} = {}'.format(
+                self.lr.get_value(), self.waiting, self.patience,
+                self.absolute_waiting, self.absolute_patience,
+                self.metric_name, self.best_value))
+
         return strs
 
     def check_condition_virtual(self, batch_id, epoch_id):
@@ -722,10 +751,36 @@ class LearningRateDecayValidation(Extension, EndCondition):
         return res
 
 
+class LearningRateSchedule(Extension):
+    """
+    Modify the learning rate at specific iterations specified by the user.
+    """
+    def __init__(self, shared_lr, iteration_ids, lr_values):
+        Extension.__init__(self, 'Learning rate schedule', 1)
+        self.lr = shared_lr
+        self.iteration_ids = iteration_ids
+        self.lr_values = lr_values
+
+    def condition_virtual(self, freq_cond, batch_id, epoch_id):
+        """The extension might only be run if certain conditions are met.
+        """
+        if batch_id in self.iteration_ids:
+            return True
+        return False
+
+    def execute_virtual(self, batch_id, epoch_id=None):
+        lr_value = self.lr_values[self.iteration_ids.index(batch_id)]
+        self.lr.set_value(lr_value)
+        return ['New learning rate: {}'.format(self.lr.get_value())]
+
+
 class LearningRateLinearRange(Extension, EndCondition):
+    """
+    Decay the learning from an initial value to an end value in `n_batches`.
+    """
     def __init__(self, init_lr, end_lr, freq, n_batches):
-        Extension.__init__(self, 'Learning rate decay', freq)
-        EndCondition.__init__(self, 'Learning rate decay', freq)
+        Extension.__init__(self, 'Learning rate linear range', freq)
+        EndCondition.__init__(self, 'Learning rate linear range', freq)
         self.n_batches = n_batches
         self.lr = init_lr
         self.decay_rate = np.float32((end_lr / init_lr.get_value()) ** (
@@ -744,16 +799,22 @@ class LearningRateLinearRange(Extension, EndCondition):
 
 
 class LearningRateDecay(Extension):
+    """
+    Decay the learning by `decay` after every `freq` iterations
+    """
     def __init__(self, init_lr, decay, decay_start_after, freq):
-        Extension.__init__(self, 'Learning rate decay', freq)
+        Extension.__init__(self, 'Learning rate simple decay', freq)
         self.lr = init_lr
         self.decay_rate = decay
         self.decay_start_after = decay_start_after
         self.n_times_decayed = 0
 
-    def condition_virtual(self, batch_id, epoch_id):
+    def condition_virtual(self, freq_cond, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
         """
+        if not freq_cond:
+            return False
+
         self.n_times_decayed += 1
         return self.n_times_decayed > self.decay_start_after
 
@@ -848,7 +909,10 @@ class BestNetworkSaver(Saver):
         self.dont_dump_for_first_n_it = dont_save_for_first_n_it
         self.n_times_checked = 0
 
-    def condition_virtual(self, batch_id, epoch_id):
+    def condition_virtual(self, freq_cond, batch_id, epoch_id):
+        if not freq_cond:
+            return False
+
         # Check if dont_save_for_first_n_it has passed
         self.n_times_checked += 1
 
@@ -948,9 +1012,12 @@ class ResetParams(Extension):
         # Index of the metric to check in the monitoring extension
         self.metric_idx = monitor.output_links[self.metric][idx]
 
-    def condition_virtual(self, batch_id, epoch_id):
+    def condition_virtual(self, freq_cond, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
         """
+        if not freq_cond:
+            return False
+
         current_value = self.monitor.history[-1][self.metric_idx]
         return current_value in self.values_to_avoid
 
