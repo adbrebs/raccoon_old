@@ -875,14 +875,15 @@ class NetworkSaver(Saver):
 class BestNetworkSaver(Saver):
     """Saves the parameters of the network.
     """
-
     def __init__(self, params, monitor, metric_name, folder_path,
                  restore_best_weights_at_the_end=True, idx=0,
                  file_name='best_net', apply_at_the_end=True,
                  metric_mode='min', dont_save_for_first_n_it=None,
-                 save_on_disk=True):
+                 save_on_disk=True, freq=False):
+        if not freq:
+            freq = monitor.freq
         super(BestNetworkSaver, self).__init__('Best Network Saver',
-                                               monitor.freq, folder_path,
+                                               freq, folder_path,
                                                file_name, apply_at_the_end)
 
         self.save_on_disk = save_on_disk
