@@ -652,7 +652,7 @@ class LearningRateDecayValidation(Extension, EndCondition):
 
     def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
                  max_patience=7, decay_rate=2., min_value=1e-12, params=None,
-                 metric_mode='min', nan_monitor=None):
+                 metric_mode='min', nan_monitor=None, percentage_best=1.0):
         Extension.__init__(self, 'Learning rate decay', monitor.freq)
         EndCondition.__init__(self, 'Learning rate decay', monitor.freq)
         self.lr = learning_rate
@@ -663,6 +663,7 @@ class LearningRateDecayValidation(Extension, EndCondition):
         self.absolute_waiting = 0
         self.validation_monitor = monitor
         self.min_value = min_value
+        self.percentage_best = percentage_best
 
         self.params = params
         self.best_params = [p.get_value() for p in self.params]
@@ -693,7 +694,7 @@ class LearningRateDecayValidation(Extension, EndCondition):
 
     def execute_virtual(self, batch_id, epoch_id=None):
 
-        if (self.nan_monitor and
+        if (self.nan_monitor and self.nan_monitor.history and
                 np.any(np.isnan(self.nan_monitor.history[-1]))):
             self.waiting = np.inf
             self.absolute_waiting = 0
@@ -704,11 +705,14 @@ class LearningRateDecayValidation(Extension, EndCondition):
                 self.metric_idx]
 
             if current_value * self.m < self.best_value * self.m:
+                if self.params:
+                    self.best_params = [p.get_value() for p in self.params]
+
+            if (current_value * self.m <
+                    self.percentage_best*self.best_value * self.m):
                 self.best_value = current_value
                 self.waiting = 0
                 self.absolute_waiting = 0
-                if self.params:
-                    self.best_params = [p.get_value() for p in self.params]
             else:
                 self.waiting += 1
                 self.absolute_waiting += 1
@@ -716,7 +720,8 @@ class LearningRateDecayValidation(Extension, EndCondition):
         strs = []
 
         if self.waiting > self.patience:
-            self.lr.set_value(self.lr.get_value() / self.decay_rate)
+            self.lr.set_value(np.float32(self.lr.get_value() /
+                                         self.decay_rate))
             self.waiting = 0
             msg = 'Learning rate decreased'
             if self.params:
