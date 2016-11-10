@@ -1,40 +1,11 @@
-"""
-Code from https://github.com/GabrielPereyra/norm-rnn
-"""
-
+import cPickle
 import gzip
 import numpy as np
 import os
 
 
-data_path = os.path.join(os.getenv('DATA_PATH'), 'penntree')
-ptb_train_path = os.path.join(data_path, 'ptb.train.txt.gz')
-ptb_valid_path = os.path.join(data_path, 'ptb.valid.txt.gz')
-ptb_test_path = os.path.join(data_path, 'ptb.test.txt.gz')
+def load_data(file_name, vocab_map, vocab_idx, vocab_size):
 
-
-# lasagne
-def load_data(file_name, vocab_map, vocab_idx):
-    """
-    Loads Penn Tree files downloaded from https://github.com/wojzaremba/lstm
-    Parameters
-    ----------
-    file_name : str
-        Path to Penn tree file.
-    vocab_map : dictionary
-        Dictionary mapping words to integers
-    vocab_idx : one element list
-        Current vocabulary index.
-    Returns
-    -------
-    Returns an array with each words specified in file_name as integers.
-    Note that the function has the side effects that vocab_map and vocab_idx
-    are updated.
-    Notes
-    -----
-    This is python port of the LUA function load_data in
-    https://github.com/wojzaremba/lstm/blob/master/data.lua
-    """
     def process_line(line):
         line = line.lstrip()
         line = line.replace('\n', '<eos>')
@@ -51,7 +22,7 @@ def load_data(file_name, vocab_map, vocab_idx):
     n_words = len(words)
     print("    Loaded %i words from %s" % (n_words, file_name))
 
-    frequencies = np.zeros(10000, dtype='float32')
+    frequencies = np.zeros(vocab_size, dtype='float32')
     x = np.zeros(n_words)
     for wrd_idx, wrd in enumerate(words):
         if wrd not in vocab_map:
@@ -59,6 +30,7 @@ def load_data(file_name, vocab_map, vocab_idx):
             vocab_idx[0] += 1
         frequencies[vocab_map[wrd]] += 1
         x[wrd_idx] = vocab_map[wrd]
+
     return x.astype('int32'), frequencies/frequencies.sum()
 
 
@@ -114,34 +86,23 @@ def reorder(x_in, batch_size, model_seq_len):
     return x_out.astype('int32'), targets.astype('int32')
 
 
-class PennTreeBankDataset():
+class InMemoryTextDataset():
 
-    def __init__(self, set, batch_size, time_steps, vocab_map=None,
-                 vocab_index=None):
-        if set == 'train':
-            path = ptb_train_path
-        elif set == 'valid':
-            path = ptb_valid_path
-        elif set == 'test':
-            path = ptb_test_path
-        else:
-            raise ValueError
-
-        if vocab_map is None:
-            self.vocab_map = {}
-        else:
-            self.vocab_map = vocab_map
-
-        if vocab_index is None:
-            self.vocab_idx = [0]
-        else:
-            self.vocab_idx = vocab_index
+    def __init__(self, data_path, set, batch_size, chunk_size):
+        path = self.select_path(data_path, set)
 
         self.batch_size = batch_size
-        self.time_steps = time_steps
-        data, frequencies = load_data(path, self.vocab_map, self.vocab_idx)
-        self.X, self.y = reorder(data, batch_size, time_steps)
+        self.time_steps = chunk_size
+
+        def load(data_path, filename):
+            return cPickle.load(open(os.path.join(data_path, filename)))
+
+        data = load(path)
+        self.X, self.y = reorder(data, batch_size, chunk_size)
         self.frequencies = frequencies
+
+    def select_path(self, data_path, set):
+        return os.path.join(data_path, '{}.pkl'.format(set))
 
     def n_batches(self):
         return self.X.shape[0] / self.batch_size

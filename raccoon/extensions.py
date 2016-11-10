@@ -627,8 +627,8 @@ class LearningRateDecayValidation(Extension, EndCondition):
         you are interested in.
     idx: int, default=0
         if metric computes several outputs, this index selects a single one.
-    learning_rate: theano shared variable
-        the variable storing the current learning rate
+    learning_rate: theano shared variable or list of shared variables
+        the variable(s) storing the current learning rate(s)
     patience: int, default=5
         the number of times we allow the metric to not improve before
         decreasing the learning rate
@@ -648,14 +648,18 @@ class LearningRateDecayValidation(Extension, EndCondition):
     nan_monitor: monitor or None (default None)
         If monitor and nan are encountered in its history, reload the last
         parameters and reduce the learning rate. If None, nan are ignored.
+    minimum_improvement: float (default 1.0)
+        Controls by how much the metric has to improve to reset the patience.
     """
 
     def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
                  max_patience=7, decay_rate=2., min_value=1e-12, params=None,
-                 metric_mode='min', nan_monitor=None, percentage_best=1.0):
+                 metric_mode='min', nan_monitor=None, minimum_improvement=.0):
         Extension.__init__(self, 'Learning rate decay', monitor.freq)
         EndCondition.__init__(self, 'Learning rate decay', monitor.freq)
-        self.lr = learning_rate
+        if not isinstance(learning_rate, (list, tuple)):
+            learning_rate = [learning_rate]
+        self.lrs = learning_rate
         self.patience = patience
         self.absolute_patience = max_patience
         self.decay_rate = decay_rate
@@ -663,7 +667,7 @@ class LearningRateDecayValidation(Extension, EndCondition):
         self.absolute_waiting = 0
         self.validation_monitor = monitor
         self.min_value = min_value
-        self.percentage_best = percentage_best
+        self.minimum_improvement = minimum_improvement
 
         self.params = params
         self.best_params = [p.get_value() for p in self.params]
@@ -704,24 +708,24 @@ class LearningRateDecayValidation(Extension, EndCondition):
             current_value = self.validation_monitor.history[-1][
                 self.metric_idx]
 
-            if current_value * self.m < self.best_value * self.m:
-                if self.params:
-                    self.best_params = [p.get_value() for p in self.params]
-
-            if (current_value * self.m <
-                    self.percentage_best*self.best_value * self.m):
-                self.best_value = current_value
+            if (self.m * (self.best_value - current_value) >
+                    self.minimum_improvement):
                 self.waiting = 0
                 self.absolute_waiting = 0
             else:
                 self.waiting += 1
                 self.absolute_waiting += 1
 
+            if current_value * self.m < self.best_value * self.m:
+                self.best_value = current_value
+                if self.params:
+                    self.best_params = [p.get_value() for p in self.params]
+
         strs = []
 
         if self.waiting > self.patience:
-            self.lr.set_value(np.float32(self.lr.get_value() /
-                                         self.decay_rate))
+            for lr in self.lrs:
+                lr.set_value(np.float32(lr.get_value() / self.decay_rate))
             self.waiting = 0
             msg = 'Learning rate decreased'
             if self.params:
@@ -731,10 +735,10 @@ class LearningRateDecayValidation(Extension, EndCondition):
             strs.append(msg)
 
         strs.append(
-            'Learning rate: {}, waiting {}/{}, absolute waiting {}/{}'
+            'Learning rates: {}, waiting {}/{}, absolute waiting {}/{}'
             ', best {} = {}'.format(
-                self.lr.get_value(), self.waiting, self.patience,
-                self.absolute_waiting, self.absolute_patience,
+                [lr.get_value() for lr in self.lrs], self.waiting,
+                self.patience, self.absolute_waiting, self.absolute_patience,
                 self.metric_name, self.best_value))
 
         return strs
@@ -743,7 +747,7 @@ class LearningRateDecayValidation(Extension, EndCondition):
         res = False
         if self.absolute_waiting > self.absolute_patience:
             res = 'Patience exceeded'
-        elif self.lr.get_value() < self.min_value:
+        elif any([lr.get_value() < self.min_value for lr in self.lrs]):
             res = 'Learning rate too small'
 
         if res and self.params:
