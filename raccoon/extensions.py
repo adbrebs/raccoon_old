@@ -304,9 +304,9 @@ class MetricMonitor(Extension):
             aggregated metric divided, before 'norm_fun' is applied. If not
             provided, its default value is default_counter.
         - 'agg_fun': a function that takes two minibatch metric values and
-            aggregate them.
+            aggregate them. default: add
         - 'norm_fun': a function that transforms the total metric and the
-            total counter.
+            total counter. default: lambda a, b: a / b
         The precise processing pattern is sketched below:
 
             total_metric = 0
@@ -670,7 +670,8 @@ class LearningRateDecayValidation(Extension, EndCondition):
         self.minimum_improvement = minimum_improvement
 
         self.params = params
-        self.best_params = [p.get_value() for p in self.params]
+        if params:
+            self.best_params = [p.get_value() for p in self.params]
 
         self.metric_name = metric_name
         self.metric = monitor.find_metric_from_name(metric_name)
