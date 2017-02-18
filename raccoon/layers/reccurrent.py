@@ -18,7 +18,7 @@ def normal_mat(size):
 class GRULayer:
     """Classic GRU layer"""
 
-    def __init__(self, ls_n_in, n_out, initializer, grad_clipping=100):
+    def __init__(self, ls_n_in, n_out, initializer, grad_clipping=None):
         """
         Parameters
         ----------
@@ -95,7 +95,8 @@ class GRULayer:
         if mask:
             h = T.switch(mask[:, None], h, h_pre)
 
-        h = grad_clip(h, -self.grad_clipping, self.grad_clipping)
+        if self.grad_clipping:
+            h = grad_clip(h, -self.grad_clipping, self.grad_clipping)
 
         return h
 

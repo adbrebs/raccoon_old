@@ -36,11 +36,8 @@ class EmbeddingLayer:
         self.params = [self.w]
 
     def apply(self, seq_or_batch):
-
-        buff = T.reshape(seq_or_batch, (-1,))
-        self.sub = self.w[buff]
-        return T.reshape(self.sub, (seq_or_batch.shape[0],
-                                    seq_or_batch.shape[1], -1))
+        self.sub = self.w[seq_or_batch]
+        return self.sub
 
 
 class DropoutLayer:

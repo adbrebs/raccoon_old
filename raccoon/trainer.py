@@ -2,7 +2,7 @@ import sys
 import time
 
 from utils import create_text_wrapper
-
+from extensions import TrainMonitor
 
 class Trainer:
     """
@@ -11,9 +11,11 @@ class Trainer:
     epoch: int
         number of epochs processed
     """
-    def __init__(self, train_monitor, data_generator, extensions=None,
-                 end_conditions=None, custom_process_fun=None,
-                 after_epoch_fun=None, print_wrap_width=80):
+    def __init__(self, train_monitors, data_generator, extensions=None,
+                 end_conditions=None, after_epoch_fun=None,
+                 print_wrap_width=80):
+        if not isinstance(train_monitors, list):
+            train_monitors = [train_monitors]
         if not extensions:
             extensions = []
         if not end_conditions:
@@ -21,13 +23,12 @@ class Trainer:
 
         self.print_wrap = create_text_wrapper(print_wrap_width)
 
-        self.train_monitor = train_monitor
-        self.extensions = [train_monitor] + extensions
+        self.train_monitors = train_monitors
+        self.extensions = train_monitors + extensions
         self.end_conditions = end_conditions
         self.data_generator = data_generator
         self.batch = self.epoch = self.begin_time = 0
         self.data_processing_time = 0
-        self.custom_process_fun = custom_process_fun
         self.after_epoch_fun = after_epoch_fun
 
     def print_extensions_logs(self, extensions_logs):
@@ -89,10 +90,8 @@ class Trainer:
             self.finish()
 
     def train_minibatch(self, inputs):
-        if self.custom_process_fun:
-            self.custom_process_fun(inputs)
-        else:
-            self.train_monitor.train(*inputs)
+        for train_monitor in self.train_monitors:
+            train_monitor.train(self.batch, *inputs)
 
     def check_extensions_conditions(self, end_epoch=False):
         """
@@ -158,14 +157,18 @@ class Trainer:
         for ext in self.extensions[1:]:  # remove training
             total_ext_time += ext.total_spent_time_in_ext
 
-        logs = [
-            (0, 'Data processing', self.data_processing_time),
-            (0, 'Training', self.train_monitor.total_spent_time_in_ext),
-            (0, 'Extensions', total_ext_time)]
+        logs = [(0, 'Data processing', self.data_processing_time)]
+        for train_monitor in self.train_monitors:
+            logs.append((0, 'Training', train_monitor.total_spent_time_in_ext))
+        logs.append((0, 'Extensions', total_ext_time))
 
-        time_recorded = (self.data_processing_time +
-                         self.train_monitor.total_spent_time_in_ext)
-        for ext in self.extensions[1:]:  # remove training
+        time_recorded = self.data_processing_time
+        for train_monitor in self.train_monitors:
+            time_recorded += train_monitor.total_spent_time_in_ext
+
+        for ext in self.extensions:
+            if isinstance(ext, TrainMonitor):
+                continue
             logs.append((1, ext.name_extension, ext.total_spent_time_in_ext))
             time_recorded += ext.total_spent_time_in_ext
 

@@ -59,7 +59,7 @@ class Extension(object):
             freq_cond = False
 
         elif self.freq == 'epoch':
-            freq_cond = end_epoch # and self.condition(batch_id, epoch_id)
+            freq_cond = end_epoch  # and self.condition(batch_id, epoch_id)
 
         else:
             freq_cond = not (batch_id % self.freq)
@@ -326,10 +326,20 @@ class MetricMonitor(Extension):
         the tensor inputs required to compute the metrics
     updates: list of theano updates, optional, default=None
         Updates fo be performed by the theano function.
+    custom_process_fun: a function taking as input the data generator output
+        and returning a processed version of it. It is typically used to reset
+        initial states of shared variables. This function is called before
+        processing a minibatch. For example, it could be:
+        def custom_process_fun(generator_output):
+            inputs, new_seq = generator_output
+            if new_seq:
+                model.reset_shared_init_states([h_ini, k_ini, w_ini])
+            return inputs
     """
 
     def __init__(self, name_extension, freq, inputs, metric_list,
-                 default_counter=1, updates=None, givens=None, **kwargs):
+                 default_counter=1, updates=None, givens=None,
+                 custom_process_fun=None, **kwargs):
         Extension.__init__(self, name_extension, freq, **kwargs)
 
         # Divide monitored metrics and corresponding aggregation schemes
@@ -339,6 +349,7 @@ class MetricMonitor(Extension):
         self.agg_funs = []
         self.norm_funs = []
         self.updates = updates
+        self.custom_process_fun = custom_process_fun
 
         for i, metric_dict in enumerate(metric_list):
             if not isinstance(metric_dict, dict):
@@ -464,6 +475,9 @@ class MetricMonitor(Extension):
         a given minibatch.
         """
 
+        if self.custom_process_fun:
+            inputs = self.custom_process_fun(inputs)
+
         # List of values of the required tensors. We have to compute the
         # metrics from them.
         tensor_values = self.f(*inputs)
@@ -507,12 +521,14 @@ class ValidationMonitor(MetricMonitor):
     def __init__(self, name_extension, freq, inputs, metric_list,
                  data_generator, default_counter=1,
                  updates=None, givens=None, apply_at_the_end=True,
-                 apply_at_the_start=False, init_states=None, **kwargs):
+                 apply_at_the_start=False, init_states=None,
+                 custom_process_fun=None, **kwargs):
         MetricMonitor.__init__(
             self, name_extension, freq, inputs, metric_list,
             default_counter=default_counter, updates=updates,
             givens=givens, apply_at_the_end=apply_at_the_end,
-            apply_at_the_start=apply_at_the_start, **kwargs)
+            apply_at_the_start=apply_at_the_start,
+            custom_process_fun=custom_process_fun, **kwargs)
         self.data_generator = data_generator
         self.init_states = init_states
 
@@ -552,14 +568,18 @@ class TrainMonitor(MetricMonitor):
     """
     Extension required by `class:Trainer` to process_batch updates and monitor
     metrics (either tensors or MonitoredQuantity objects).
+
+    train_freq: the frequency at which the train method is called.
     """
 
     def __init__(self, freq, inputs, metric_list, updates,
-                 default_counter=1, givens=None, **kwargs):
+                 default_counter=1, givens=None, train_freq=1,
+                 custom_process_fun=None, **kwargs):
         MetricMonitor.__init__(
             self, 'Training', freq, inputs, metric_list,
             default_counter=default_counter,
-            updates=updates, givens=givens, **kwargs)
+            updates=updates, givens=givens,
+            custom_process_fun=custom_process_fun, **kwargs)
 
         self.time_since_last_execute = 0
 
@@ -569,6 +589,7 @@ class TrainMonitor(MetricMonitor):
         # Needs also to keep track of the number of minibatches since last
         # display
         self.n_minibatches = 0
+        self.train_freq = train_freq
 
     def execute(self, batch_id, epoch_id=None):
         begin = time.time()
@@ -595,7 +616,10 @@ class TrainMonitor(MetricMonitor):
 
         return res
 
-    def train(self, *inputs):
+    def train(self, minibatch, *inputs):
+        if minibatch % self.train_freq:
+            return
+
         begin = time.time()
 
         m_values, c_values = self.compute_metrics_minibatch(*inputs)
@@ -841,10 +865,11 @@ class Saver(Extension):
 
     def __init__(self, name_extension, freq, folder_path, file_name,
                  apply_at_the_end=True, **kwargs):
-        super(Saver, self).__init__(name_extension, freq,
-                                    apply_at_the_end=apply_at_the_end,
-                                    **kwargs)
+        super(Saver, self).__init__(
+            name_extension, freq, apply_at_the_end=apply_at_the_end, **kwargs)
         self.folder_path = folder_path
+        if not os.path.isdir(folder_path):
+            os.makedirs(folder_path)
         self.file_name = file_name
 
     def execute_virtual(self, batch_id, epoch_id=None):

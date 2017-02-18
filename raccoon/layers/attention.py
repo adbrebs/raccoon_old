@@ -18,12 +18,15 @@ class PositionAttentionLayer:
     Positional attention mechanism as described by Alex Graves in
     http://arxiv.org/abs/1308.0850
     """
-    def __init__(self, layer_to_be_conditioned, n_in_cond, n_mixt, initializer):
+    def __init__(self, layer_to_be_conditioned, n_in_cond, n_mixt, initializer,
+                 position_gap=0.1, grad_clip=None):
         self.n_in_cond = n_in_cond
         self.n_mixt = n_mixt
 
         self.layer = layer_to_be_conditioned
         n_out = self.n_out = self.layer.n_out
+        self.position_gap = position_gap
+        self.grad_clip = grad_clip
 
         self.w_cond = shared(initializer.sample((n_out, 3*n_mixt)), 'w_cond')
         self.b_cond = shared(normal_mat((3*n_mixt, )), 'b_cond')
@@ -59,7 +62,7 @@ class PositionAttentionLayer:
 
         a = act[:, :self.n_mixt]
         b = act[:, self.n_mixt:2*self.n_mixt]
-        k = k_pre + 0.1*act[:, -self.n_mixt:]
+        k = k_pre + self.position_gap * act[:, -self.n_mixt:]
 
         # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
@@ -68,14 +71,19 @@ class PositionAttentionLayer:
         # phi: (length_cond_sequence, batch_size)
         phi = phi * seq_cond_mask
 
-        # w: (batch_size, n_chars)
+        # # TODO (not in Graves)
+        # phi = phi * seq_cond_mask + -1000*(1-seq_cond_mask)
+        # phi = T.nnet.softmax(phi.T).T * seq_cond_mask
+
+        # w: (batch_size, condition_n_features)
         w = T.sum(T.shape_padright(phi) * seq_cond, axis=0)
 
         if mask:
             k = mask[:, None]*k + (1-mask[:, None])*k_pre
             w = mask[:, None]*w + (1-mask[:, None])*w_pre
 
-        w = grad_clip(w, -100, 100)
+        if self.grad_clip:
+            w = grad_clip(w, -self.grad_clip, self.grad_clip)
 
         return h, a, k, phi, w
 
@@ -107,7 +115,7 @@ class AttentionLayerNaive():
         ----------
         seq: (seq_length, batch_size, n_hidden)
         seq_mask: (seq_length, batch_size)
-        attention_weights: (length_seq_context, batch_size, 1)
+        attention_weights: (length_seq_text, batch_size, 1)
 
         Returns
         -------
