@@ -632,10 +632,10 @@ class TrainMonitor(MetricMonitor):
         self.time_since_last_execute += (time.time() - begin)
 
 
-class LearningRateDecayValidation(Extension, EndCondition):
+class ValidationSchedule(Extension, EndCondition):
     """
-    Both extension and ending condition that decreases the learning rate if
-    there is no improvement on a metric monitored by a monitoring extension.
+    Both extension and ending condition that performs an action if there is no
+    improvement on a metric monitored by a monitoring extension.
     If does not improve for absolute_patience, then the training stops.
 
     The frequence of this extension is the same as the :class:`Monitor` monitor
@@ -649,21 +649,18 @@ class LearningRateDecayValidation(Extension, EndCondition):
     metric: MonitoredQuantity or tensor
         the metric (either MonitoredQuantity object or tensor) that
         you are interested in.
+    metric_mode: string, either 'min' or 'max', default='min'
+        indicates if the metric should be minimized of maximized
     idx: int, default=0
         if metric computes several outputs, this index selects a single one.
-    learning_rate: theano shared variable or list of shared variables
-        the variable(s) storing the current learning rate(s)
+    process_function: function with no arguments
+        the function to be called if the metric is not improved
     patience: int, default=5
         the number of times we allow the metric to not improve before
-        decreasing the learning rate
+        calling the process_function
     max_patience: int, default=7
         the number of times we allow the metric to not improve before we
         stop the training.
-    decay_rate: float, default=2.0
-        the rate at which the learning rate is decreased
-    min_value: float
-        the minimal value that we tolerate for the learning rate. Below it, we
-        stop training.
     params: list of shared variables (default None)
         if you want the best parameters to be saved and restored. If you want
         to include both the parameters of the network and those of the
@@ -671,26 +668,27 @@ class LearningRateDecayValidation(Extension, EndCondition):
         params=list(updates.keys()) as input.
     nan_monitor: monitor or None (default None)
         If monitor and nan are encountered in its history, reload the last
-        parameters and reduce the learning rate. If None, nan are ignored.
+        parameters and call the process_function. If None, nan are ignored.
     minimum_improvement: float (default 1.0)
         Controls by how much the metric has to improve to reset the patience.
+    name: string (default None)
+        Name of the extension
     """
 
-    def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
-                 max_patience=7, decay_rate=2., min_value=1e-12, params=None,
-                 metric_mode='min', nan_monitor=None, minimum_improvement=.0):
-        Extension.__init__(self, 'Learning rate decay', monitor.freq)
-        EndCondition.__init__(self, 'Learning rate decay', monitor.freq)
-        if not isinstance(learning_rate, (list, tuple)):
-            learning_rate = [learning_rate]
-        self.lrs = learning_rate
+    def __init__(self, monitor, metric_name, process_function, idx=0, patience=5,
+                 max_patience=7, params=None, metric_mode='min',
+                 nan_monitor=None, minimum_improvement=.0, name=None):
+        extension_name = 'Validation schedule'
+        if name:
+            extension_name += ' ({})'.format(name)
+        Extension.__init__(self, extension_name, monitor.freq)
+        EndCondition.__init__(self, extension_name, monitor.freq)
+        self.process_function = process_function
         self.patience = patience
         self.absolute_patience = max_patience
-        self.decay_rate = decay_rate
         self.waiting = 0
         self.absolute_waiting = 0
         self.validation_monitor = monitor
-        self.min_value = min_value
         self.minimum_improvement = minimum_improvement
 
         self.params = params
@@ -749,8 +747,7 @@ class LearningRateDecayValidation(Extension, EndCondition):
         strs = []
 
         if self.waiting > self.patience:
-            for lr in self.lrs:
-                lr.set_value(np.float32(lr.get_value() / self.decay_rate))
+            self.process_function()
             self.waiting = 0
             msg = 'Learning rate decreased'
             if self.params:
@@ -760,20 +757,20 @@ class LearningRateDecayValidation(Extension, EndCondition):
             strs.append(msg)
 
         strs.append(
-            'Learning rates: {}, waiting {}/{}, absolute waiting {}/{}'
-            ', best {} = {}'.format(
-                [lr.get_value() for lr in self.lrs], self.waiting,
+            '{} waiting {}/{}, absolute waiting {}/{}, best {} = {}'.format(
+                self.display_info(), self.waiting,
                 self.patience, self.absolute_waiting, self.absolute_patience,
                 self.metric_name, self.best_value))
 
         return strs
 
+    def display_info(self):
+        return ''
+
     def check_condition_virtual(self, batch_id, epoch_id):
         res = False
         if self.absolute_waiting > self.absolute_patience:
             res = 'Patience exceeded'
-        elif any([lr.get_value() < self.min_value for lr in self.lrs]):
-            res = 'Learning rate too small'
 
         if res and self.params:
             for p, v in zip(self.params, self.best_params):
@@ -783,6 +780,111 @@ class LearningRateDecayValidation(Extension, EndCondition):
         if res:
             res = [res]
         return res
+
+
+class SharedVariableValidationSchedule(ValidationSchedule):
+    """
+    Both extension and ending condition that modifies shared variables if
+    there is no improvement on a metric monitored by a monitoring extension.
+    If does not improve for absolute_patience, then the training stops.
+
+    The frequence of this extension is the same as the :class:`Monitor` monitor
+    parameter.
+
+    Check the docstring of mother class ValidationSchedule
+    for more information.
+
+    Parameters:
+    -----------
+    shared_variables: theano shared variable or list of shared variables
+        the variable(s) to be modified
+    decay_rate: float, default=2.0
+        the rate at which the learning rate is decreased. (the variables are
+        divided by this decay_rate.)
+    min_value: float (default None)
+        the minimal value that we tolerate for the shared variables.
+        Below it, we stop training.
+    max_value: float (default None)
+        the maximal value that we tolerate for the shared variables.
+        Above it, we stop training.
+    See mother class ValidationSchedule for the description of the other
+    parameters.
+    """
+    def __init__(self, monitor, metric_name, shared_variables, idx=0, patience=5,
+                 max_patience=7, decay_rate=2., max_value=None,
+                 min_value=1e-12, params=None, metric_mode='min',
+                 nan_monitor=None, minimum_improvement=.0,
+                 display_name='Shared variables'):
+
+        if not isinstance(shared_variables, (list, tuple)):
+            shared_variables = [shared_variables]
+        self.shared_variables = shared_variables
+        self.decay_rate = decay_rate
+        self.min_value = min_value
+        self.max_value = max_value
+        self.display_name = display_name
+
+        def process_function():
+            for sh in self.shared_variables:
+                sh.set_value(np.float32(sh.get_value() / self.decay_rate))
+
+        ValidationSchedule.__init__(
+            self, monitor, metric_name, process_function, idx=idx,
+            patience=patience, max_patience=max_patience, params=params,
+            metric_mode=metric_mode, nan_monitor=nan_monitor,
+            minimum_improvement=minimum_improvement,
+            name='{} decay'.format(self.display_name))
+
+    def check_condition_virtual(self, batch_id, epoch_id):
+        res = ValidationSchedule.check_condition_virtual(
+            self, batch_id, epoch_id)
+        if res:
+            return res
+
+        for sh in self.shared_variables:
+            if self.min_value and sh.get_value() < self.min_value:
+                return ['{} too small'.format(self.display_name)]
+            elif self.max_value and sh.get_value() > self.max_value:
+                return ['{} too big'.format(self.display_name)]
+
+        return False
+
+    def display_info(self):
+        return '{}: {},'.format(
+            self.display_name,
+            [sh.get_value() for sh in self.shared_variables])
+
+
+class LearningRateDecayValidation(SharedVariableValidationSchedule):
+    """
+    Both extension and ending condition that decreases the learning rate if
+    there is no improvement on a metric monitored by a monitoring extension.
+    If does not improve for absolute_patience, then the training stops.
+
+    The frequence of this extension is the same as the :class:`Monitor` monitor
+    parameter.
+
+    Check the docstring of mother class ValidationSchedule
+    for more information.
+
+    Parameters:
+    -----------
+    learning_rate: theano shared variable or list of shared variables
+        the variable(s) storing the current learning rate(s)
+    See mother class ValidationSchedule for the description of the other
+    parameters.
+    """
+    def __init__(self, monitor, metric_name, learning_rate, idx=0, patience=5,
+                 max_patience=7, decay_rate=2., min_value=1e-12, params=None,
+                 metric_mode='min', nan_monitor=None, minimum_improvement=.0):
+
+        SharedVariableValidationSchedule.__init__(
+            self, monitor, metric_name, learning_rate, idx=idx,
+            patience=patience, max_patience=max_patience,
+            decay_rate=decay_rate, min_value=min_value, params=params,
+            metric_mode=metric_mode, nan_monitor=nan_monitor,
+            minimum_improvement=minimum_improvement,
+            display_name='Learning rate')
 
 
 class LearningRateSchedule(Extension):
