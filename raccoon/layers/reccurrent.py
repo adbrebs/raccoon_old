@@ -189,14 +189,41 @@ class BidirectionalRNN:
 
         self.params = rnn_forward.params + rnn_backward.params
 
-    def apply(self, seq_inputs, seq_mask, h_ini_forward, h_ini_backward):
+    def apply(self, seq_inputs, h_ini, seq_mask=None):
+        fw_n_out = self.rnn_forward.n_out
+        h_ini_forward = h_ini[:, :fw_n_out]
+        h_ini_backward = h_ini[:, fw_n_out:]
+
         seq_forward, up_forward = self.rnn_forward.apply(
-            seq_inputs, seq_mask, h_ini_forward)
+            seq_inputs, h_ini_forward, seq_mask=seq_mask)
         seq_backward, up_backward = self.rnn_backward.apply(
-            seq_inputs, seq_mask, h_ini_backward, go_backwards=True)
+            seq_inputs, h_ini_backward, seq_mask=seq_mask, go_backwards=True)
 
         seq_forward *= seq_mask[:, :, None]
         seq_backward *= seq_mask[::-1, :, None]
 
         return (T.concatenate([seq_forward, seq_backward[::-1]], -1),
                 up_forward + up_backward)
+
+
+# class DeepRnn:
+#     def __init__(self, ls_rnns):
+#         self.ls_rnns = ls_rnns
+#
+#         self.params = [p for params in ls_rnns for p in params]
+#
+#     def apply(self, seq_inputs, h_ini, seq_mask=None):
+#         fw_n_out = self.rnn_forward.n_out
+#         h_ini_forward = h_ini[:, :fw_n_out]
+#         h_ini_backward = h_ini[:, fw_n_out:]
+#
+#         seq_forward, up_forward = self.rnn_forward.apply(
+#             seq_inputs, h_ini_forward, seq_mask=seq_mask)
+#         seq_backward, up_backward = self.rnn_backward.apply(
+#             seq_inputs, h_ini_backward, seq_mask=seq_mask, go_backwards=True)
+#
+#         seq_forward *= seq_mask[:, :, None]
+#         seq_backward *= seq_mask[::-1, :, None]
+#
+#         return (T.concatenate([seq_forward, seq_backward[::-1]], -1),
+#                 up_forward + up_backward)

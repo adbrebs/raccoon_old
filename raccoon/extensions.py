@@ -677,12 +677,10 @@ class ValidationSchedule(Extension, EndCondition):
 
     def __init__(self, monitor, metric_name, process_function, idx=0, patience=5,
                  max_patience=7, params=None, metric_mode='min',
-                 nan_monitor=None, minimum_improvement=.0, name=None):
-        extension_name = 'Validation schedule'
-        if name:
-            extension_name += ' ({})'.format(name)
-        Extension.__init__(self, extension_name, monitor.freq)
-        EndCondition.__init__(self, extension_name, monitor.freq)
+                 nan_monitor=None, minimum_improvement=.0,
+                 name='Validation schedule'):
+        Extension.__init__(self, name, monitor.freq)
+        EndCondition.__init__(self, name, monitor.freq)
         self.process_function = process_function
         self.patience = patience
         self.absolute_patience = max_patience
@@ -812,9 +810,9 @@ class SharedVariableValidationSchedule(ValidationSchedule):
     """
     def __init__(self, monitor, metric_name, shared_variables, idx=0, patience=5,
                  max_patience=7, decay_rate=2., max_value=None,
-                 min_value=1e-12, params=None, metric_mode='min',
+                 min_value=None, params=None, metric_mode='min',
                  nan_monitor=None, minimum_improvement=.0,
-                 display_name='Shared variables'):
+                 name='Shared variables decay'):
 
         if not isinstance(shared_variables, (list, tuple)):
             shared_variables = [shared_variables]
@@ -822,7 +820,6 @@ class SharedVariableValidationSchedule(ValidationSchedule):
         self.decay_rate = decay_rate
         self.min_value = min_value
         self.max_value = max_value
-        self.display_name = display_name
 
         def process_function():
             for sh in self.shared_variables:
@@ -833,7 +830,7 @@ class SharedVariableValidationSchedule(ValidationSchedule):
             patience=patience, max_patience=max_patience, params=params,
             metric_mode=metric_mode, nan_monitor=nan_monitor,
             minimum_improvement=minimum_improvement,
-            name='{} decay'.format(self.display_name))
+            name=name)
 
     def check_condition_virtual(self, batch_id, epoch_id):
         res = ValidationSchedule.check_condition_virtual(
@@ -843,16 +840,15 @@ class SharedVariableValidationSchedule(ValidationSchedule):
 
         for sh in self.shared_variables:
             if self.min_value and sh.get_value() < self.min_value:
-                return ['{} too small'.format(self.display_name)]
+                return ['too small']
             elif self.max_value and sh.get_value() > self.max_value:
-                return ['{} too big'.format(self.display_name)]
+                return ['too big']
 
         return False
 
     def display_info(self):
-        return '{}: {},'.format(
-            self.display_name,
-            [sh.get_value() for sh in self.shared_variables])
+        return '{},'.format([float(sh.get_value())
+                             for sh in self.shared_variables])
 
 
 class LearningRateDecayValidation(SharedVariableValidationSchedule):
@@ -884,7 +880,7 @@ class LearningRateDecayValidation(SharedVariableValidationSchedule):
             decay_rate=decay_rate, min_value=min_value, params=params,
             metric_mode=metric_mode, nan_monitor=nan_monitor,
             minimum_improvement=minimum_improvement,
-            display_name='Learning rate')
+            name='Learning rate decay')
 
 
 class LearningRateSchedule(Extension):
@@ -984,6 +980,7 @@ class Saver(Extension):
         file_handle = open(file_path, 'wb')
         obj, msg = self.compute_object()
         cPickle.dump(obj, file_handle)
+        file_handle.close()
         return msg
 
     def compute_object(self):
@@ -1083,6 +1080,7 @@ class BestNetworkSaver(Saver):
             file_path = os.path.join(self.folder_path, self.file_name + '.pkl')
         file_handle = open(file_path, 'r')
         self.best_params_values = cPickle.load(file_handle)
+        file_handle.close()
 
         for p, v in zip(self.params, self.best_params_values):
             p.set_value(v)
