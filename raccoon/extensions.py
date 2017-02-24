@@ -569,7 +569,8 @@ class TrainMonitor(MetricMonitor):
     Extension required by `class:Trainer` to process_batch updates and monitor
     metrics (either tensors or MonitoredQuantity objects).
 
-    train_freq: the frequency at which the train method is called.
+    train_freq: the frequency at which the train method is called. freq=1 for
+        training at every minibatch.
     """
 
     def __init__(self, freq, inputs, metric_list, updates,

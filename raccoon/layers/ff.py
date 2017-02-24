@@ -3,7 +3,8 @@ import numpy as np
 import theano
 import theano.tensor as T
 from theano import shared
-from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
+from theano.sandbox.rng_mrg import MRG_RandomStreams as MRG_RandomStreams
+from theano.tensor.shared_randomstreams import RandomStreams
 
 from . import create_parameter
 
@@ -43,7 +44,9 @@ class EmbeddingLayer:
 class DropoutLayer:
     def __init__(self, p):
         self.p = p
-        self.srng = RandomStreams(seed=np.random.randint(10e8))
+        self.srng = MRG_RandomStreams(seed=np.random.randint(10e8))
+
+        self.params = []
 
     def apply(self, x, training_time):
         if training_time:
@@ -52,3 +55,81 @@ class DropoutLayer:
                    1-self.p)
 
         return x
+
+
+class MixtureGaussiansSoftmax:
+    def __init__(self, n_inputs, n_outputs, means, priors, stds,
+                 train_means, train_priors, train_stds, jacobian_factor):
+
+        self.n_inputs = n_inputs
+        self.n_outputs = n_outputs
+        self.means = means  # (n_out, n_in)
+        self.priors = priors  # (n_out,)
+        self.stds = stds  # (n_in,)
+        self.jacobian_factor = jacobian_factor
+
+        self.params = []
+        if train_means:
+            self.params.append(means)
+        if train_priors:
+            self.params.append(priors)
+        if train_stds:
+            self.params.append(stds)
+
+    def compute_bw(self):
+
+        w = self.means / T.shape_padleft(T.sqr(self.stds))
+
+        b = T.log(self.priors) - 0.5*(self.means * w).sum(axis=1)
+
+        # out = T.dot(input, self.w.T) + self.b
+        # out = T.nnet.softmax(out)
+        #
+        # # (batch_size, )
+        # return -T.nnet.categorical_crossentropy(out, tg)
+
+        return b, w
+
+    def compute_post_negll(self, h, tg):
+        # input: (batch_size, n_in)
+
+        ### Posterior p(c/x)
+
+        # b1: (n_out, n_in)
+        b1 = self.means / (T.sqr(self.stds) + 1e-8)
+        # b2: (batch_size, n_out)
+        b2 = - 0.5*T.sqrt((b1 * self.means).sum(axis=-1)) + T.dot(h, b1.T)
+
+        # buff: (batch_size, n_out)
+        buff = b2 + T.log(self.priors)
+
+        post = T.nnet.softmax(buff)
+
+        return T.nnet.categorical_crossentropy(post, tg)
+
+    def compute_joint_loss(self, h, tg):
+        # input: (batch_size, n_in)
+        srng = RandomStreams(seed=234)
+        a = srng.permutation(n=h.shape[0], size=(1,))[0]
+        h_noised = h[a]
+
+        means = self.means[tg]
+
+        # z: (batch_size, n_in)
+        z = (h - means) / (self.stds + 1e-6)
+
+        l = (T.log(self.priors[tg])
+             - T.log(self.stds).sum()
+             - 0.5 * (z ** 2).sum(axis=-1))
+
+        # add Jacobian
+        equal = T.eq(h.sum(axis=1), h_noised.sum(axis=1))
+        inc = T.switch(equal, T.zeros_like(equal, equal.dtype),
+                       self.jacobian_factor*0.5*self.n_inputs * (
+                           T.log(1e-8 + ((h - h_noised)**2).sum(axis=-1))))
+        l += inc
+
+        return -l
+
+
+

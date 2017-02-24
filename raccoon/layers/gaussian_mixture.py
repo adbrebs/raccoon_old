@@ -83,7 +83,6 @@ class MixtureGaussians:
 
         # prop: (b, n), mean: (b, n, d), std: (b, n, d)
         prop, mean, std = self.compute_parameters(h_seq, .0)
-        std = std*0 + 1.0
 
         # (b, n, d)
         tg_s = (T.shape_padaxis(tg_seq, 1) - mean) / std
