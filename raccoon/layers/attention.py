@@ -5,6 +5,8 @@ from theano.gradient import grad_clip
 
 import numpy as np
 
+from utils import convert_to_list
+
 theano.config.floatX = 'float32'
 floatX = theano.config.floatX
 
@@ -13,50 +15,21 @@ def normal_mat(size):
     return np.random.normal(0, 0.001, size=size).astype(floatX)
 
 
-class PositionAttentionLayer:
-    """
-    Positional attention mechanism as described by Alex Graves in
-    http://arxiv.org/abs/1308.0850
-    """
-    def __init__(self, layer_to_be_conditioned, n_in_cond, n_mixt, initializer,
+class PositionAttentionMechanism:
+    def __init__(self, n_in_cond, n_mixt, initializer, n_out,
                  position_gap=0.1, grad_clip=None):
         self.n_in_cond = n_in_cond
         self.n_mixt = n_mixt
-
-        self.layer = layer_to_be_conditioned
-        n_out = self.n_out = self.layer.n_out
         self.position_gap = position_gap
         self.grad_clip = grad_clip
+        self.n_out = n_out
 
         self.w_cond = shared(initializer.sample((n_out, 3*n_mixt)), 'w_cond')
         self.b_cond = shared(normal_mat((3*n_mixt, )), 'b_cond')
 
-        self.params = layer_to_be_conditioned.params + \
-                      [self.w_cond, self.b_cond]
+        self.params = [self.w_cond, self.b_cond]
 
-    def step(self, inputs, h_pre, k_pre, w_pre, seq_cond, seq_cond_mask,
-             mask=None):
-        """
-        A single timestep.
-
-        Parameters
-        ----------
-        inputs: (batch_size, n_in)
-        h_pre: (batch_size, n_hidden)
-        mask: (batch_size,)
-
-        k_pre: (batch_size, n_mixt)
-        w_pre: (batch_size, n_in_cond)
-
-        seq_cond: (length_cond_sequence, batch_size, n_in_cond)
-        seq_cond_mask: (length_cond_sequence, batch_size)
-        """
-        # inputs: (batch_size, n_in + n_in_cond)
-        inputs = T.concatenate([inputs, w_pre], axis=1)
-
-        # h: (batch_size, n_hidden)
-        h = self.layer.step(inputs, h_pre, mask=mask, process_inputs=True)
-
+    def step(self, h, k_pre, w_pre, seq_cond, seq_cond_mask, mask=None):
         # act: (batch_size, 3*n_mixt)
         act = T.exp(T.dot(h, self.w_cond) + self.b_cond)
 
@@ -89,24 +62,98 @@ class PositionAttentionLayer:
         if self.grad_clip:
             w = grad_clip(w, -self.grad_clip, self.grad_clip)
 
-        return h, a, k, phi, w
+        return a, k, phi, w
 
-    def apply(self, seq_inputs, seq_mask, seq_cond, seq_cond_mask,
-              h_ini, k_ini, w_ini):
 
-        def scan_step(inputs, mask, h_pre, k_pre, w_pre,
-                      seq_cond, seq_cond_mask):
-            return self.step(inputs, h_pre, k_pre, w_pre,
-                             seq_cond, seq_cond_mask, mask)
+class PositionAttentionLayer:
+    """
+    Positional attention mechanism as described by Alex Graves in
+    http://arxiv.org/abs/1308.0850
 
-        (seq_h, _, seq_k, _, seq_w), scan_updates = theano.scan(
+    This layer can have several attention mechanisms.
+    """
+    def __init__(self, layer_to_be_conditioned, ls_attention_mechanisms):
+
+        self.layer = layer_to_be_conditioned
+        if not isinstance(ls_attention_mechanisms, (list, tuple)):
+            ls_attention_mechanisms = [ls_attention_mechanisms]
+        self.ls_mechanisms = ls_attention_mechanisms
+        self.n_mechanisms = len(ls_attention_mechanisms)
+
+        self.params = layer_to_be_conditioned.params
+        for mech in ls_attention_mechanisms:
+            self.params.extend(mech.params)
+
+    def step(self, inputs, h_pre, mask=None, *args):
+        """
+        A single timestep.
+
+        Parameters
+        ----------
+        inputs: (batch_size, n_in)
+        h_pre: (batch_size, n_hidden)
+        mask: (batch_size,)
+
+        *args contain (k_pre, w_pre, seq_cond, seq_cond_mask) as many times
+            as the number of attention mechanisms.
+        k_pre: (batch_size, n_mixt)
+        w_pre: (batch_size, n_in_cond)
+        seq_cond: (length_cond_sequence, batch_size, n_in_cond)
+        seq_cond_mask: (length_cond_sequence, batch_size)
+        """
+
+        # inputs: (batch_size, n_in + n_in_cond)
+        all_w_pre = [args[4*i+1] for i in range(self.n_mechanisms)]
+        inputs = T.concatenate([inputs] + all_w_pre, axis=1)
+
+        # h: (batch_size, n_hidden)
+        h = self.layer.step(inputs, h_pre, mask=mask, process_inputs=True)
+
+        out_att = [h]
+        for i, mech in enumerate(self.ls_mechanisms):
+            k_pre, w_pre, seq_cond, seq_cond_mask = args[4*i:4*(i+1)]
+            a, k, phi, w = self.ls_mechanisms[i].step(
+                h, k_pre, w_pre, seq_cond, seq_cond_mask, mask=mask)
+            out_att.extend([a, k, phi, w])
+
+        # h, a, k, phi, w
+        return tuple(out_att)
+
+    def apply(self, seq_inputs, seq_mask, ls_seq_cond, ls_seq_cond_mask,
+              h_ini, ls_k_ini, ls_w_ini):
+
+        ls_seq_cond = convert_to_list(ls_seq_cond)
+        ls_seq_cond_mask = convert_to_list(ls_seq_cond_mask)
+        ls_k_ini = convert_to_list(ls_k_ini)
+        ls_w_ini = convert_to_list(ls_w_ini)
+
+        def scan_step(inputs, mask, h_pre, *args):
+            # h, a, k, phi, w
+            return self.step(inputs, h_pre, mask, *args)
+
+        outputs_info = [h_ini]
+        non_sequences = []
+        for i in range(self.n_mechanisms):
+            outputs_info.extend([None, ls_k_ini[i], None, ls_w_ini[i]])
+            non_sequences.extend([ls_seq_cond[i], ls_seq_cond_mask[i]])
+
+        scan_outputs, scan_updates = theano.scan(
             fn=scan_step,
             sequences=[seq_inputs, seq_mask],
-            outputs_info=[h_ini, None, k_ini, None, w_ini],
-            non_sequences=[seq_cond, seq_cond_mask]
+            outputs_info=outputs_info,
+            non_sequences=non_sequences
         )
 
-        return (seq_h, seq_k, seq_w), scan_updates
+        # scan_outputs is like (h, a, k, phi, w) with possibly several
+        # attentions
+        seq_h = scan_outputs[0]
+        ls_seq_k = []
+        ls_seq_w = []
+        for i in range(self.n_mechanisms):
+            ls_seq_k.append(scan_outputs[4*i + 2])
+            ls_seq_w.append(scan_outputs[4*i + 4])
+
+        return (seq_h, ls_seq_k, ls_seq_w), scan_updates
 
 
 class AttentionLayerNaive():

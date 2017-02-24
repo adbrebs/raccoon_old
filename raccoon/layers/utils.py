@@ -2,6 +2,12 @@ import numpy as np
 from theano import tensor as T
 
 
+def convert_to_list(input):
+    if not isinstance(input, (tuple, list)):
+        input = [input]
+    return input
+
+
 def clip_norm_gradients(grads, value=1):
     n = T.sqrt(sum([T.sum(T.square(g)) for g in grads]))
     return [T.switch(n >= value, g * value / n, g) for g in grads]
