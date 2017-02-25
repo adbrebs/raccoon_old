@@ -186,6 +186,7 @@ class BidirectionalRNN:
     def __init__(self, rnn_forward, rnn_backward):
         self.rnn_forward = rnn_forward
         self.rnn_backward = rnn_backward
+        self.n_out = rnn_backward.n_out + rnn_forward.n_out
 
         self.params = rnn_forward.params + rnn_backward.params
 

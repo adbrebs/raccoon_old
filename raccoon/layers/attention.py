@@ -94,8 +94,8 @@ class PositionAttentionLayer:
         h_pre: (batch_size, n_hidden)
         mask: (batch_size,)
 
-        *args contain (k_pre, w_pre, seq_cond, seq_cond_mask) as many times
-            as the number of attention mechanisms.
+        *args contain k*(k_pre, w_pre) and k*(seq_cond, seq_cond_mask) where k
+            is the number of attention mechanisms.
         k_pre: (batch_size, n_mixt)
         w_pre: (batch_size, n_in_cond)
         seq_cond: (length_cond_sequence, batch_size, n_in_cond)
@@ -103,15 +103,17 @@ class PositionAttentionLayer:
         """
 
         # inputs: (batch_size, n_in + n_in_cond)
-        all_w_pre = [args[4*i+1] for i in range(self.n_mechanisms)]
+        all_w_pre = [args[2*i+1] for i in range(self.n_mechanisms)]
         inputs = T.concatenate([inputs] + all_w_pre, axis=1)
 
         # h: (batch_size, n_hidden)
         h = self.layer.step(inputs, h_pre, mask=mask, process_inputs=True)
 
         out_att = [h]
+        offset = 2*self.n_mechanisms
         for i, mech in enumerate(self.ls_mechanisms):
-            k_pre, w_pre, seq_cond, seq_cond_mask = args[4*i:4*(i+1)]
+            k_pre, w_pre = args[2*i: 2*i + 2]
+            seq_cond, seq_cond_mask = args[offset + 2*i: offset + 2*i + 2]
             a, k, phi, w = self.ls_mechanisms[i].step(
                 h, k_pre, w_pre, seq_cond, seq_cond_mask, mask=mask)
             out_att.extend([a, k, phi, w])
