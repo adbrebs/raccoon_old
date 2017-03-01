@@ -65,6 +65,57 @@ class PositionAttentionMechanism:
         return a, k, phi, w
 
 
+class SimplePositionAttentionMechanism:
+    """
+    Same as Graves except that there is no mixture and a softmax over
+    the sequence.
+    """
+    def __init__(self, n_in_cond, initializer, n_out,
+                 position_gap=0.1, grad_clip=None):
+        self.n_in_cond = n_in_cond
+        self.n_mixt = 1
+        self.position_gap = position_gap
+        self.grad_clip = grad_clip
+        self.n_out = n_out
+
+        self.w_cond = shared(initializer.sample((n_out, 3)), 'w_cond')
+        self.b_cond = shared(normal_mat((3, )), 'b_cond')
+
+        self.params = [self.w_cond, self.b_cond]
+
+    def step(self, h, k_pre, w_pre, seq_cond, seq_cond_mask, mask=None):
+        # act: (batch_size, 3*n_mixt)
+        act = T.exp(T.dot(h, self.w_cond) + self.b_cond)
+
+        a = act[:, :self.n_mixt]
+        b = act[:, self.n_mixt:2*self.n_mixt]
+        k = k_pre + self.position_gap * act[:, -self.n_mixt:]
+
+        # limit value of k. Otherwise some unused values of k may become
+        # extremely large
+        k = T.minimum(k, 2*T.shape_padright(seq_cond_mask.sum(axis=0)))
+
+        # u: (length_cond_sequence, 1, 1)
+        u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 1)
+        # phi: (length_cond_sequence, batch_size, n_mixt)
+        temp = ((-b[:, 0] * (k[:, 0] - u) ** 2) * seq_cond_mask -1000 * (
+            1 - seq_cond_mask))
+        phi = T.nnet.softmax(temp.T).T
+        # phi: (length_cond_sequence, batch_size)
+        phi = phi * seq_cond_mask
+
+        # w: (batch_size, condition_n_features)
+        w = T.sum(T.shape_padright(phi) * seq_cond, axis=0)
+
+        if mask:
+            k = mask[:, None]*k + (1-mask[:, None])*k_pre
+            w = mask[:, None]*w + (1-mask[:, None])*w_pre
+
+        if self.grad_clip:
+            w = grad_clip(w, -self.grad_clip, self.grad_clip)
+
+        return a, k, phi, w
+
 class PositionAttentionLayer:
     """
     Positional attention mechanism as described by Alex Graves in
