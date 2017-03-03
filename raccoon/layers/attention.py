@@ -46,7 +46,7 @@ class PositionAttentionMechanism:
         # phi: (length_cond_sequence, batch_size, n_mixt)
         phi = T.sum(a * T.exp(-b * (k-u)**2), axis=-1)
         # phi: (length_cond_sequence, batch_size)
-        phi = phi * seq_cond_mask
+        phi *= seq_cond_mask
 
         # # TODO (not in Graves)
         # phi = phi * seq_cond_mask + -1000*(1-seq_cond_mask)
@@ -102,7 +102,7 @@ class SimplePositionAttentionMechanism:
             1 - seq_cond_mask))
         phi = T.nnet.softmax(temp.T).T
         # phi: (length_cond_sequence, batch_size)
-        phi = phi * seq_cond_mask
+        phi *= seq_cond_mask
 
         # w: (batch_size, condition_n_features)
         w = T.sum(T.shape_padright(phi) * seq_cond, axis=0)
@@ -115,6 +115,7 @@ class SimplePositionAttentionMechanism:
             w = grad_clip(w, -self.grad_clip, self.grad_clip)
 
         return a, k, phi, w
+
 
 class PositionAttentionLayer:
     """
@@ -184,8 +185,7 @@ class PositionAttentionLayer:
             # h, a, k, phi, w
             return self.step(inputs, h_pre, mask, *args)
 
-        outputs_info = [h_ini]
-        non_sequences = []
+        outputs_info, non_sequences = [h_ini], []
         for i in range(self.n_mechanisms):
             outputs_info.extend([None, ls_k_ini[i], None, ls_w_ini[i]])
             non_sequences.extend([ls_seq_cond[i], ls_seq_cond_mask[i]])
