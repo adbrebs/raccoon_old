@@ -92,8 +92,10 @@ class MixtureGaussians:
 
         c = -logsumexp(tmp, axis=1)
 
-        c = T.sum(c * mask_seq) / T.sum(mask_seq)
-        c.name = 'negll'
+        c = T.sum(c * mask_seq)
+        loss = c / T.sum(mask_seq)
+        loss.name = c.name = 'negll'
+        negll = {'metric': c, 'counter': mask_seq.sum()}
 
         max_prop = T.argmax(prop, axis=1).mean()
         max_prop.name = 'max_prop'
@@ -104,7 +106,7 @@ class MixtureGaussians:
         min_std = T.min(std)
         min_std.name = 'min_std_mixture'
 
-        return c, [c, max_prop, std_max_prop, min_std]
+        return loss, [negll, max_prop, std_max_prop, min_std]
 
 
 class SquareOutput:

@@ -46,10 +46,6 @@ class PositionAttentionMechanism:
             k = k_pre + self.position_gap * (
                 2. + 2. * T.tanh(act[:, self.n_mixt:2 * self.n_mixt]))
 
-        # limit value of k. Otherwise some unused values of k may become
-        # extremely large
-        k = T.minimum(k, 2*T.shape_padright(seq_cond_mask.sum(axis=0)))
-
         # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
         # phi: (length_cond_sequence, batch_size, n_mixt)
@@ -99,10 +95,6 @@ class SimplePositionAttentionMechanism:
         a = act[:, :self.n_mixt]
         b = act[:, self.n_mixt:2*self.n_mixt]
         k = k_pre + self.position_gap * act[:, -self.n_mixt:]
-
-        # limit value of k. Otherwise some unused values of k may become
-        # extremely large
-        k = T.minimum(k, 2*T.shape_padright(seq_cond_mask.sum(axis=0)))
 
         # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 1)
