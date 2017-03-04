@@ -200,13 +200,14 @@ class PositionAttentionLayer:
         # scan_outputs is like (h, a, k, phi, w) with possibly several
         # attentions
         seq_h = scan_outputs[0]
-        ls_seq_k = []
-        ls_seq_w = []
+        ls_seq_a, ls_seq_k, ls_seq_p, ls_seq_w = [], [], [], []
         for i in range(self.n_mechanisms):
+            ls_seq_a.append(scan_outputs[4*i + 1])
             ls_seq_k.append(scan_outputs[4*i + 2])
+            ls_seq_p.append(scan_outputs[4*i + 3])
             ls_seq_w.append(scan_outputs[4*i + 4])
 
-        return (seq_h, ls_seq_k, ls_seq_w), scan_updates
+        return (seq_h, ls_seq_a, ls_seq_k, ls_seq_p, ls_seq_w), scan_updates
 
 
 class AttentionLayerNaive():
