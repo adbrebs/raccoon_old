@@ -159,7 +159,10 @@ class SquareOutput:
 
         buff = (out - tg_seq)
         c = (buff*buff).sum(axis=1) * mask_seq
-        c = c.sum() / mask_seq.sum()
+        c = c.sum()
         c.name = 'mse'
+        mse_monitoring = {'metric': c, 'counter': mask_seq.sum()}
+        loss = c / mask_seq.sum()
+        loss.name = 'mse'
 
-        return c, [c]
+        return loss, [mse_monitoring]

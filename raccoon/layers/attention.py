@@ -17,12 +17,13 @@ def normal_mat(size):
 
 class PositionAttentionMechanism:
     def __init__(self, n_in_cond, n_mixt, initializer, n_out,
-                 position_gap=0.1, grad_clip=None):
+                 position_gap=0.1, grad_clip=None, normalize_att=False):
         self.n_in_cond = n_in_cond
         self.n_mixt = n_mixt
         self.position_gap = position_gap
         self.grad_clip = grad_clip
         self.n_out = n_out
+        self.normalize_att = normalize_att
 
         self.w_cond = shared(initializer.sample((n_out, 3*n_mixt)), 'w_cond')
         self.b_cond = shared(normal_mat((3*n_mixt, )), 'b_cond')
@@ -31,11 +32,19 @@ class PositionAttentionMechanism:
 
     def step(self, h, k_pre, w_pre, seq_cond, seq_cond_mask, mask=None):
         # act: (batch_size, 3*n_mixt)
-        act = T.exp(T.dot(h, self.w_cond) + self.b_cond)
+        act = T.dot(h, self.w_cond) + self.b_cond
 
-        a = act[:, :self.n_mixt]
-        b = act[:, self.n_mixt:2*self.n_mixt]
-        k = k_pre + self.position_gap * act[:, -self.n_mixt:]
+        if not self.normalize_att:
+            act = T.exp(act)
+            a = act[:, :self.n_mixt]
+            b = act[:, self.n_mixt:2*self.n_mixt]
+            k = k_pre + self.position_gap * act[:, -self.n_mixt:]
+
+        else:
+            a = T.nnet.softmax(act[:, :self.n_mixt])
+            b = 2. + 2. * T.tanh(act[:, self.n_mixt:2 * self.n_mixt])
+            k = k_pre + self.position_gap * (
+                2. + 2. * T.tanh(act[:, self.n_mixt:2 * self.n_mixt]))
 
         # limit value of k. Otherwise some unused values of k may become
         # extremely large

@@ -59,31 +59,36 @@ class Trainer:
                 self.epoch += 1
                 epoch_iterator = self.data_generator()
 
+                t = time.time()
+                inputs = next(epoch_iterator, None)
+                self.data_processing_time += time.time() - t
+
                 while not is_finished:
                     t = time.time()
-                    inputs = next(epoch_iterator, None)
+                    next_inputs = next(epoch_iterator, None)
                     self.data_processing_time += time.time() - t
-                    if inputs is None:
-                        break
+
+                    end_epoch = False
+                    if next_inputs is None:
+                        end_epoch = True
 
                     self.batch += 1
 
                     self.train_minibatch(inputs)
 
-                    res = self.check_extensions_conditions()
+                    res = self.check_extensions_conditions(end_epoch=end_epoch)
 
                     if res:
                         self.finish()
                         is_finished = True
+                        break
 
-                if not is_finished:
-                    if self.after_epoch_fun:
-                        self.after_epoch_fun()
-
-                    res = self.check_extensions_conditions(end_epoch=True)
-                    if res:
-                        self.finish()
-                        is_finished = True
+                    if end_epoch:
+                        if self.after_epoch_fun:
+                            self.after_epoch_fun()
+                        break
+                    else:
+                        inputs = next_inputs
 
         except KeyboardInterrupt:
             print 'Training interrupted by user.'

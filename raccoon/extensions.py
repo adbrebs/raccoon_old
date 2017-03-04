@@ -720,6 +720,8 @@ class ValidationSchedule(Extension, EndCondition):
 
     def execute_virtual(self, batch_id, epoch_id=None):
 
+        strs = []
+
         if (self.nan_monitor and self.nan_monitor.history and
                 np.any(np.isnan(self.nan_monitor.history[-1]))):
             self.waiting = np.inf
@@ -742,8 +744,7 @@ class ValidationSchedule(Extension, EndCondition):
                 self.best_value = current_value
                 if self.params:
                     self.best_params = [p.get_value() for p in self.params]
-
-        strs = []
+                    strs.append('Best params saved.')
 
         if self.waiting > self.patience:
             self.process_function()
