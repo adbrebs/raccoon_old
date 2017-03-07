@@ -885,15 +885,35 @@ class LearningRateDecayValidation(SharedVariableValidationSchedule):
             name='Learning rate decay')
 
 
-class LearningRateSchedule(Extension):
+class VariableSchedule(Extension):
     """
-    Modify the learning rate at specific iterations specified by the user.
+    Modify a variable at specific iterations specified by the user.
+    The variable can either be a scalar shared variable or a list with a single
+    scalar element.
     """
-    def __init__(self, shared_lr, iteration_ids, lr_values):
-        Extension.__init__(self, 'Learning rate schedule', 1)
-        self.lr = shared_lr
+    def __init__(self, variable_name, var, iteration_ids, values):
+        extension_name = variable_name + ' schedule'
+        Extension.__init__(self, extension_name, 1)
+        self.variable_name = variable_name
+        self.var = var
         self.iteration_ids = iteration_ids
-        self.lr_values = lr_values
+        self.values = values
+
+        if isinstance(var, T.sharedvar.SharedVariable):
+            def fun_setter(x, var):
+                var.set_value(x)
+            def fun_getter(var):
+                var.get_value()
+        elif isinstance(var, (tuple, list)):
+            def fun_setter(x, var):
+                var[0] = x
+            def fun_getter(var):
+                return var[0]
+        else:
+            raise ValueError
+
+        self.fun_setter = fun_setter
+        self.fun_getter = fun_getter
 
     def condition_virtual(self, freq_cond, batch_id, epoch_id):
         """The extension might only be run if certain conditions are met.
@@ -903,9 +923,16 @@ class LearningRateSchedule(Extension):
         return False
 
     def execute_virtual(self, batch_id, epoch_id=None):
-        lr_value = self.lr_values[self.iteration_ids.index(batch_id)]
-        self.lr.set_value(lr_value)
-        return ['New learning rate: {}'.format(self.lr.get_value())]
+        value = self.values[self.iteration_ids.index(batch_id)]
+        self.fun_setter(value, self.var)
+        return ['New {}: {}'.format(self.variable_name,
+                                    self.fun_getter(self.var))]
+
+
+class LearningRateSchedule(VariableSchedule):
+    def __init__(self, shared_lr, iteration_ids, values_lr):
+        VariableSchedule.__init__(
+            self, 'Learning rate', shared_lr, iteration_ids, values_lr)
 
 
 class LearningRateLinearRange(Extension, EndCondition):
