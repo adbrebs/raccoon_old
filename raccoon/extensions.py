@@ -726,7 +726,6 @@ class ValidationSchedule(Extension, EndCondition):
                 np.any(np.isnan(self.nan_monitor.history[-1]))):
             self.waiting = np.inf
             self.absolute_waiting = 0
-            self.nan_monitor.history.pop()
 
         else:
             current_value = self.validation_monitor.history[-1][
