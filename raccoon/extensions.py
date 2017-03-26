@@ -296,7 +296,8 @@ class MetricMonitor(Extension):
             objects or (b) dict {'metric': tensor or MonitoredQuantity,
             'counter': scalar tensor (optional), 'agg_fun': elemwise function
             of two arguments (optional), 'norm_fun': elemwise function of
-            two arguments (optional)}
+            two arguments (optional), 'name': string representing the name
+            of the metric (optional)}
         the list of metrics that are monitored by this extension.
         If a dict is provided, the key 'metric' has to be provided and
         represents the metric. The other keys are optional:
@@ -369,14 +370,19 @@ class MetricMonitor(Extension):
             if isinstance(metric, MonitoredQuantity):
                 self.metric_names.extend(metric.names)
             else:
+                if 'name' in metric_dict:
+                    metric.name = metric_dict['name']
                 self.metric_names.append(metric.name)
             counters.append(metric_dict['counter'])
             self.agg_funs.append(metric_dict.get('agg_fun', np.add))
-            self.norm_funs.append(metric_dict.get('norm_fun', lambda a, b: a / b))
+            self.norm_funs.append(metric_dict.get(
+                'norm_fun', lambda a, b: a / b))
 
         if None in self.metric_names:
-            raise Exception('A metric provided does not have a name. Set it'
-                            'with metric.name="zoulou"')
+            raise Exception(
+                'A metric provided does not have a name. Set it with '
+                'metric.name="zoulou" if the metric is a tensor or with'
+                'metric["name"]="zoulou" if the metric is a dict.')
 
         # Total number of outputs (some monitored metrics may have several
         # outputs). output_links {metric: indices of outputs} links each metric
