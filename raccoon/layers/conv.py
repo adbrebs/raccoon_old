@@ -2,6 +2,7 @@ import numpy as np
 
 import theano
 import theano.tensor as T
+from theano import shared
 
 from . import create_parameter
 
@@ -33,12 +34,42 @@ def identity(x):
     return x
 
 
+def highway(x, inp, channel_axis=2):
+    assert (channel_axis in [1, 2])
+    if channel_axis == 1:
+        H_ = T.tanh(x[:, ::2])
+        T_ = T.nnet.sigmoid(x[:, 1::2])
+    else:
+        H_ = T.tanh(x[:, :, ::2])
+        T_ = T.nnet.sigmoid(x[:, :, 1::2])
+    return H_*T_ + (1.-T_)*inp
+
+
+class HighWayBlock:
+    def __init__(self, conv_dim, K, filter_size, init):
+        self.conv_list = [
+            Conv1d(
+                   conv_dim, 2*conv_dim, filter_size, init=init,
+                   non_linearity='identity'
+                ) for k in range(K)
+        ]
+        self.params = []
+        for conv in self.conv_list:
+            self.params.extend(conv.params)
+
+    def apply(self, x, x_mask):
+        output = x
+        for i, conv in enumerate(self.conv_list):
+            output = highway(conv.apply(output, x_mask), output)
+        return output
+
+
 class MultiFilterConv:
     def __init__(self, input_dim, output_dim_per_filter, K, init):
         self.conv_list = [
             Conv1d(
                    input_dim, output_dim_per_filter, k, init=init
-                ) for k in range(2, K, 1)
+                ) for k in range(1, K+1, 1)
         ]
         self.params = []
         for conv in self.conv_list:
@@ -71,13 +102,19 @@ class Conv1d:
         self.border_mode = border_mode
         self.dim_order = dim_order
         self.bias = bias
+        self.non_linearity = non_linearity
+        self.filter_size = filter_size
+
+        if (filter_size == 1) and (self.border_mode != 'valid'):
+            print "Warning: for filter-size = 1, only valid conv is supported"
+            self.border_mode = 'valid'
 
         if self.border_mode == 'pad_before':
             self.border_mode_ = (self.filter_size - 1, 0)
         else:
             self.border_mode_ = self.border_mode
 
-        if non_linearity == 'gated':
+        if non_linearity in ['gated']:
             num_filters = 2*output_dim
         else:
             num_filters = output_dim
@@ -90,8 +127,8 @@ class Conv1d:
         self.W = create_parameter(init, W_shape, "conv_filter")
 
         if bias:
-            self.b = create_parameter(init, bias_shape, "conv_bias")
-
+            self.b = shared(
+                floatX(np.random.normal(0, 0.01, size=bias_shape)), "conv_bias")
         self.params = [self.W, self.b]
 
         if non_linearity == 'gated':
