@@ -46,11 +46,12 @@ def highway(x, inp, channel_axis=2):
 
 
 class HighWayBlock:
-    def __init__(self, conv_dim, K, filter_size, init):
+    def __init__(
+         self, conv_dim, K, filter_size, init, border_mode='pad_before'):
         self.conv_list = [
             Conv1d(
                    conv_dim, 2*conv_dim, filter_size, init=init,
-                   non_linearity='identity'
+                   non_linearity='identity', border_mode=border_mode
                 ) for k in range(K)
         ]
         self.params = []
@@ -65,10 +66,13 @@ class HighWayBlock:
 
 
 class MultiFilterConv:
-    def __init__(self, input_dim, output_dim_per_filter, K, init):
+    def __init__(
+         self, input_dim, output_dim_per_filter, K,
+         init, border_mode='pad_before'):
         self.conv_list = [
             Conv1d(
-                   input_dim, output_dim_per_filter, k, init=init
+                   input_dim, output_dim_per_filter,
+                   k, init=init, border_mode=border_mode
                 ) for k in range(1, K+1, 1)
         ]
         self.params = []
