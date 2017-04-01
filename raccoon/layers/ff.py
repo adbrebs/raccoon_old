@@ -1,24 +1,32 @@
 import numpy as np
 
+from lasagne.nonlinearities import linear
 import theano
 import theano.tensor as T
 from theano import shared
 from theano.sandbox.rng_mrg import MRG_RandomStreams as MRG_RandomStreams
 from theano.tensor.shared_randomstreams import RandomStreams
 
+from utils import create_uneven_weight
 from . import create_parameter
 
 
 class FFLayer:
-    def __init__(self, n_in, n_out, w_initializer, b_initializer,
+    def __init__(self, ls_n_in, n_out, w_initializer, b_initializer,
                  non_linearity=None):
-        self.n_in = n_in
+
+        if not isinstance(ls_n_in, (tuple, list)):
+            ls_n_in = [ls_n_in]
+
+        self.n_in = sum(ls_n_in)
+
         self.n_out = n_out
         if not non_linearity:
-            non_linearity = lambda x: x
+            non_linearity = linear
         self.non_linearity = non_linearity
 
-        self.w = create_parameter(w_initializer, (n_in, n_out), 'w_ff')
+        w_in_mat = create_uneven_weight(ls_n_in, self.n_out, w_initializer)
+        self.w = shared(w_in_mat, 'w_ff')
         self.b = create_parameter(b_initializer, (n_out,), 'b_ff')
 
         self.params = [self.w, self.b]
