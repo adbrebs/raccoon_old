@@ -5,7 +5,7 @@ from theano.gradient import grad_clip
 
 import numpy as np
 
-from utils import convert_to_list
+from utils import to_list
 
 theano.config.floatX = 'float32'
 floatX = theano.config.floatX
@@ -177,10 +177,10 @@ class PositionAttentionLayer:
     def apply(self, seq_inputs, seq_mask, ls_seq_cond, ls_seq_cond_mask,
               h_ini, ls_k_ini, ls_w_ini):
 
-        ls_seq_cond = convert_to_list(ls_seq_cond)
-        ls_seq_cond_mask = convert_to_list(ls_seq_cond_mask)
-        ls_k_ini = convert_to_list(ls_k_ini)
-        ls_w_ini = convert_to_list(ls_w_ini)
+        ls_seq_cond = to_list(ls_seq_cond)
+        ls_seq_cond_mask = to_list(ls_seq_cond_mask)
+        ls_k_ini = to_list(ls_k_ini)
+        ls_w_ini = to_list(ls_w_ini)
 
         def scan_step(inputs, mask, h_pre, *args):
             # h, a, k, phi, w

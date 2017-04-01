@@ -2,7 +2,7 @@ import numpy as np
 from theano import tensor as T
 
 
-def convert_to_list(input):
+def to_list(input):
     # make sure that the input is a list
     if not isinstance(input, (tuple, list)):
         input = [input]
