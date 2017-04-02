@@ -17,13 +17,15 @@ def normal_mat(size):
 
 class PositionAttentionMechanism:
     def __init__(self, n_in_cond, n_mixt, initializer, n_out,
-                 position_gap=0.1, grad_clip=None, normalize_att=False):
+                 position_gap=0.1, grad_clip=None, normalize_att=False,
+                 position_min_step=0.):
         self.n_in_cond = n_in_cond
         self.n_mixt = n_mixt
-        self.position_gap = position_gap
+        self.position_gap = position_gap - position_min_step
         self.grad_clip = grad_clip
         self.n_out = n_out
         self.normalize_att = normalize_att
+        self.position_min_step = position_min_step
 
         self.w_cond = shared(initializer.sample((n_out, 3*n_mixt)), 'w_cond')
         self.b_cond = shared(normal_mat((3*n_mixt, )), 'b_cond')
@@ -46,6 +48,7 @@ class PositionAttentionMechanism:
             k = k_pre + self.position_gap * (
                 2. + 2. * T.tanh(act[:, self.n_mixt:2 * self.n_mixt]))
 
+        k = k + self.position_min_step
         # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
         # phi: (length_cond_sequence, batch_size, n_mixt)
@@ -76,12 +79,13 @@ class SimplePositionAttentionMechanism:
     the sequence.
     """
     def __init__(self, n_in_cond, initializer, n_out,
-                 position_gap=0.1, grad_clip=None):
+                 position_gap=0.1, grad_clip=None, position_min_step=0.):
         self.n_in_cond = n_in_cond
         self.n_mixt = 1
-        self.position_gap = position_gap
+        self.position_gap = position_gap - position_min_step
         self.grad_clip = grad_clip
         self.n_out = n_out
+        self.position_min_step = position_min_step
 
         self.w_cond = shared(initializer.sample((n_out, 3)), 'w_cond')
         self.b_cond = shared(normal_mat((3, )), 'b_cond')
@@ -94,7 +98,8 @@ class SimplePositionAttentionMechanism:
 
         a = act[:, :self.n_mixt]
         b = act[:, self.n_mixt:2*self.n_mixt]
-        k = k_pre + self.position_gap * act[:, -self.n_mixt:]
+        k = k_pre + self.position_gap * act[:, -self.n_mixt:] \
+            + self.position_min_step
 
         # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 1)
