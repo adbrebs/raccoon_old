@@ -48,6 +48,7 @@ class PositionAttentionMechanism:
             k = k_pre + self.position_gap * (
                 2. + 2. * T.tanh(act[:, self.n_mixt:2 * self.n_mixt]))
 
+        k = k
         # u: (length_cond_sequence, 1, 1)
         u = T.shape_padright(T.arange(seq_cond.shape[0], dtype=floatX), 2)
         # phi: (length_cond_sequence, batch_size, n_mixt)
