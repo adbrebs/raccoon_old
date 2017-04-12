@@ -17,13 +17,15 @@ def normal_mat(size):
 
 class PositionAttentionMechanism:
     def __init__(self, n_in_cond, n_mixt, initializer, n_out,
-                 position_gap=0.1, grad_clip=None, normalize_att=False):
+                 position_gap=0.1, grad_clip=None, normalize_att=False,
+                 softmax_phi=False):
         self.n_in_cond = n_in_cond
         self.n_mixt = n_mixt
         self.position_gap = position_gap
         self.grad_clip = grad_clip
         self.n_out = n_out
         self.normalize_att = normalize_att
+        self.softmax_phi = softmax_phi
 
         self.w_cond = shared(initializer.sample((n_out, 3*n_mixt)), 'w_cond')
         self.b_cond = shared(normal_mat((3*n_mixt, )), 'b_cond')
@@ -53,9 +55,9 @@ class PositionAttentionMechanism:
         # phi: (length_cond_sequence, batch_size)
         phi *= seq_cond_mask
 
-        # # TODO (not in Graves)
-        # phi = phi * seq_cond_mask + -1000*(1-seq_cond_mask)
-        # phi = T.nnet.softmax(phi.T).T * seq_cond_mask
+        if self.softmax_phi:  # TODO (not in Graves)
+            phi = phi * seq_cond_mask + -1000*(1-seq_cond_mask)
+            phi = T.nnet.softmax(phi.T).T * seq_cond_mask
 
         # w: (batch_size, condition_n_features)
         w = T.sum(T.shape_padright(phi) * seq_cond, axis=0)
